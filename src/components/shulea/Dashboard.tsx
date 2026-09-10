@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import {
-  Users, School, BookOpen, UserCog, PenTool, FileText, TrendingUp, Award, MessageSquare, ShieldCheck, HardDrive
+  Users, School, BookOpen, UserCog, PenTool, FileText, TrendingUp, Award, MessageSquare, ShieldCheck, HardDrive, Download
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -26,8 +26,9 @@ interface Stats {
 }
 
 interface TeacherWorkspace {
-  classes: { id: string; name: string; fullName?: string; studentCount: number; role: string; subject?: string }[]
+  classes: { id: string; name: string; fullName?: string; studentCount: number; role: string; subject?: string; subjects?: string[] }[]
   students: { id: string; fullName: string; class?: { fullName?: string } }[]
+  subjects: string[]
   isHeadTeacher: boolean
 }
 
@@ -99,9 +100,12 @@ export default function Dashboard() {
             apiCall(`/api/shulea/teacher-classes?teacherId=${teacher.id}&schoolId=${currentSchool.id}&actorUserId=${currentUser.id}`),
             apiCall(`/api/shulea/teacher-students?teacherId=${teacher.id}&schoolId=${currentSchool.id}&actorUserId=${currentUser.id}`),
           ])
+          const assignedClasses = [...(classData.classTeacherAssignments || []), ...(classData.subjectOnlyAssignments || [])]
+          const assignedSubjects = assignedClasses.flatMap((item: { subjects?: string[]; subject?: string }) => item.subjects || (item.subject ? [item.subject] : []))
           setTeacherWorkspace({
-            classes: [...(classData.classTeacherAssignments || []), ...(classData.subjectOnlyAssignments || [])],
+            classes: assignedClasses,
             students: studentData.students || [],
+            subjects: Array.from(new Set(assignedSubjects)),
             isHeadTeacher: Boolean(classData.teacher?.isHeadTeacher),
           })
 
@@ -190,6 +194,28 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
+      <Card className="border-emerald-100 bg-white shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+              <Download className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base">ShuleSMS</CardTitle>
+              <CardDescription className="mt-1">
+                Download ShuleSMS and install it on your Android phone to send results by SMS.
+              </CardDescription>
+            </div>
+          </div>
+          <Button asChild className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 sm:w-auto">
+            <a href="/downloads/shulesms.apk" download="shulesms.apk">
+              <Download className="h-4 w-4" />
+              Install on your phone
+            </a>
+          </Button>
+        </CardContent>
+      </Card>
+
       {isSchoolAdmin && currentSchool && (
         <Card className="border-emerald-100 bg-white">
           <CardHeader className="pb-3">
@@ -265,6 +291,15 @@ export default function Dashboard() {
                 </Badge>
               ))}
               {teacherWorkspace.classes.length === 0 && <p className="text-sm text-muted-foreground">No class or subject assignment has been linked to your account yet.</p>}
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">My Subjects</p>
+              <div className="flex flex-wrap gap-2">
+                {teacherWorkspace.subjects.map((subject) => (
+                  <Badge key={subject} variant="outline" className="border-emerald-200 bg-emerald-50/60 text-emerald-800">{subject}</Badge>
+                ))}
+                {teacherWorkspace.subjects.length === 0 && <p className="text-sm text-muted-foreground">No subject assignment has been linked yet.</p>}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={() => setView('students')}><Users className="mr-2 h-4 w-4" />My Students</Button>
