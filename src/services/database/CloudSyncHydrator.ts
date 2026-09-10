@@ -30,15 +30,24 @@ function safeUpsert(table: string, record: RecordValue) {
     throw new Error(`Cannot hydrate ${table} without a stable record ID`)
   }
 
+  // Older bootstrap payloads did not include timestamps for every entity.
+  // Local SQLite keeps these columns NOT NULL, so preserve a valid server
+  // value when present and provide a device-side fallback for legacy rows.
+  const normalizedRecord: RecordValue = { ...record }
+  const now = new Date().toISOString()
+  if (fields.includes('createdAt') && !normalizedRecord.createdAt) normalizedRecord.createdAt = now
+  if (fields.includes('updatedAt') && !normalizedRecord.updatedAt) normalizedRecord.updatedAt = normalizedRecord.createdAt || now
+  if (table === 'School' && normalizedRecord.isDemo === undefined) normalizedRecord.isDemo = 0
+
   // UPDATE preserves the existing row and all foreign-key relationships.
   // The INSERT uses a NOT EXISTS guard so repeated hydration remains
   // idempotent without SQLite's destructive INSERT OR REPLACE behavior.
-  const presentFields = fields.filter(field => field !== 'id' && record[field] !== undefined)
+  const presentFields = fields.filter(field => field !== 'id' && normalizedRecord[field] !== undefined)
   const queries: Array<{ sql: string; params?: unknown[] }> = []
   if (presentFields.length) {
     queries.push({
       sql: `UPDATE ${table} SET ${presentFields.map(field => `${field} = ?`).join(', ')} WHERE id = ?`,
-      params: [...presentFields.map(field => sqlValue(record[field])), record.id],
+      params: [...presentFields.map(field => sqlValue(normalizedRecord[field])), record.id],
     })
   }
 
@@ -46,7 +55,7 @@ function safeUpsert(table: string, record: RecordValue) {
   const placeholders = fields.map(() => '?').join(', ')
   queries.push({
     sql: `INSERT INTO ${table} (${columns}) SELECT ${placeholders} WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE id = ?)`,
-    params: [...fields.map(field => sqlValue(record[field])), record.id],
+    params: [...fields.map(field => sqlValue(normalizedRecord[field])), record.id],
   })
   return queries
 }

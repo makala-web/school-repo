@@ -75,12 +75,19 @@ export async function GET(request: NextRequest) {
 
     // Get subject assignments (for non-class-teacher subjects)
     const subjectAssignments = await db.teacherSubject.findMany({
-      where: { teacherId },
+      where: { teacherId, class: { schoolId } },
       include: {
-        class: true,
+        class: { include: { _count: { select: { students: true } } } },
         subject: true
       }
     });
+
+    const subjectsByClass = new Map<string, string[]>()
+    for (const assignment of subjectAssignments) {
+      const subjects = subjectsByClass.get(assignment.classId) || []
+      subjects.push(assignment.subject.name)
+      subjectsByClass.set(assignment.classId, subjects)
+    }
 
     // Prepare response
     const classTeacherClasses = assignments.map(a => ({
@@ -90,6 +97,7 @@ export async function GET(request: NextRequest) {
       studentCount: a.class.students.length,
       role: 'CLASS_TEACHER' as const,
       startDate: a.startDate
+      ,subjects: subjectsByClass.get(a.classId) || []
     }));
 
     const subjectOnlyClasses = subjectAssignments
@@ -99,8 +107,9 @@ export async function GET(request: NextRequest) {
         name: sa.class.name,
         fullName: sa.class.fullName,
         subject: sa.subject.name,
-        studentCount: 0, // Will need to fetch separately if needed
-        role: 'SUBJECT_TEACHER' as const
+        studentCount: sa.class._count.students,
+        role: 'SUBJECT_TEACHER' as const,
+        subjects: [sa.subject.name]
       }));
 
     // Get head teacher status

@@ -293,6 +293,18 @@ export default function SuperAdminDashboard() {
     }
   }
 
+  function reviewRenewal(school: School) {
+    setSelectedSchool(school)
+    setLicenseForm({
+      status: school.licenseStatus || 'ACTIVE',
+      licenseType: school.licenseType || 'STANDARD',
+      expiryDate: school.expiryDate ? new Date(school.expiryDate).toISOString().slice(0, 10) : '',
+      maxTeachers: school.maxTeachers || 20,
+      maxDevices: school.maxDevices || 20,
+    })
+    setEditLicenseDialog(true)
+  }
+
   async function handleDeleteSchool() {
     if (!selectedSchool) return
     const confirmation = window.prompt(`Type the school ID to delete ${selectedSchool.name}:`)
@@ -612,6 +624,33 @@ export default function SuperAdminDashboard() {
         </Card>
       )}
 
+      {schools.some((school) => school.renewalRequestedAt) && (
+        <Card className="border-sky-200 bg-sky-50/60">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Renewal Requests</CardTitle>
+                <CardDescription>Review requests submitted by school administrators.</CardDescription>
+              </div>
+              <Badge variant="outline">{schools.filter((school) => school.renewalRequestedAt).length} pending</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {schools.filter((school) => school.renewalRequestedAt).map((school) => (
+              <div key={school.id} className="flex flex-col gap-3 rounded-md border bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-slate-900">{school.name}</p>
+                  <p className="text-xs text-muted-foreground">Requested {formatDate(school.renewalRequestedAt || '')}</p>
+                </div>
+                <Button size="sm" onClick={() => reviewRenewal(school)}>
+                  <Calendar className="mr-2 h-4 w-4" /> Review renewal
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-amber-200">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -689,7 +728,7 @@ export default function SuperAdminDashboard() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="max-h-[34rem] overflow-auto rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>

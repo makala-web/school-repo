@@ -11,9 +11,11 @@ export async function GET(request: NextRequest) {
   const authorizedClassIds = await getAuthorizedClassIds(actor, { allowSubjectAssignment: true })
   const classWhere = authorizedClassIds ? { schoolId: actor.schoolId, id: { in: authorizedClassIds } } : { schoolId: actor.schoolId }
   const [school, classes, teachers, gradingConfigs, sequence] = await Promise.all([
-    db.school.findUnique({ where: { id: actor.schoolId }, select: { id: true, name: true, schoolType: true, academicYear: true, term: true, isDemo: true, licenseStatus: true } }),
+    // Hydration writes the school row into the local SQLite schema. Return the
+    // complete non-sensitive record so required timestamps are preserved.
+    db.school.findUnique({ where: { id: actor.schoolId } }),
     db.class.findMany({ where: classWhere, orderBy: { name: 'asc' }, include: { subjects: { include: { subject: true } } } }),
-    db.teacher.findMany({ where: { schoolId: actor.schoolId, ...(authorizedClassIds ? { classTeacherAssignments: { some: { classId: { in: authorizedClassIds }, status: 'ACTIVE' } } } : {}) }, select: { id: true, name: true, shortName: true, sign: true, phone: true, schoolId: true } }),
+    db.teacher.findMany({ where: { schoolId: actor.schoolId, ...(authorizedClassIds ? { classTeacherAssignments: { some: { classId: { in: authorizedClassIds }, status: 'ACTIVE' } } } : {}) } }),
     db.gradingConfig.findMany({ where: { schoolId: actor.schoolId } }),
     db.syncSequence.findUnique({ where: { schoolId: actor.schoolId }, select: { nextSequence: true } }),
   ])

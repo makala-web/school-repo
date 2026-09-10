@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
 import { SubjectRepository } from '@/repositories/SubjectRepository';
 import { ConnectionManager } from '@/services/database/ConnectionManager';
 import { getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
@@ -217,59 +218,47 @@ async function handleAssignToClass(body: {
   }
 
   try {
-    const cm = await import('@/services/database/ConnectionManager')
-    const conn = cm.ConnectionManager
+    // This route always runs on the server. Use Prisma here instead of the
+    // device ConnectionManager: its SQLite `?` placeholders are not valid for
+    // PostgreSQL and caused the production HTTP 500 during class assignment.
+    const requestedSubjectIds = [...new Set(subjectIds.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+    const existing = await db.classSubject.findMany({
+      where: { classId },
+      select: { subjectId: true },
+    })
 
-    // Get existing assignments
-    const existing = await conn.query(`
-      SELECT subjectId FROM ClassSubject WHERE classId = ?
-    `, [classId]);
-
-    const existingSubjectIds = existing.map((row: any) => row.subjectId);
-    const toRemove = existingSubjectIds.filter(id => !subjectIds.includes(id));
-    const toAdd = subjectIds.filter(id => !existingSubjectIds.includes(id));
+    const existingSubjectIds = existing.map(row => row.subjectId);
+    const toRemove = existingSubjectIds.filter(id => !requestedSubjectIds.includes(id));
+    const toAdd = requestedSubjectIds.filter(id => !existingSubjectIds.includes(id));
 
     console.log('[SUBJECT] To add:', toAdd.length, 'To remove:', toRemove.length);
 
-    // Remove unassigned subjects
-    if (toRemove.length > 0) {
-      for (const subjectId of toRemove) {
-        await conn.execute(`
-          DELETE FROM ClassSubject WHERE classId = ? AND subjectId = ?
-        `, [classId, subjectId]);
+    await db.$transaction(async tx => {
+      if (toRemove.length) {
+        await tx.classSubject.deleteMany({
+          where: { classId, subjectId: { in: toRemove } },
+        })
       }
-    }
-
-    // Add new subject assignments
-    if (toAdd.length > 0) {
-      for (const subjectId of toAdd) {
-        await conn.execute(`
-          INSERT INTO ClassSubject (id, classId, subjectId, createdAt)
-          VALUES (?, ?, ?, ?)
-        `, [crypto.randomUUID(), classId, subjectId, new Date().toISOString()]);
+      if (toAdd.length) {
+        await tx.classSubject.createMany({
+          data: toAdd.map(subjectId => ({ classId, subjectId })),
+          skipDuplicates: true,
+        })
       }
-    }
+    })
 
-    // Fetch updated class subjects
-    const classSubjects = await conn.query(`
-      SELECT cs.*, s.id as subjectId, s.name as subjectName, s.shortName as subjectShortName, s.schoolType as subjectSchoolType
-      FROM ClassSubject cs
-      JOIN Subject s ON cs.subjectId = s.id
-      WHERE cs.classId = ?
-      ORDER BY s.name ASC
-    `, [classId]);
+    const classSubjects = await db.classSubject.findMany({
+      where: { classId },
+      include: { subject: { select: { id: true, name: true, shortName: true, schoolType: true } } },
+      orderBy: { subject: { name: 'asc' } },
+    })
 
-    const formattedClassSubjects = classSubjects.map((row: any) => ({
+    const formattedClassSubjects = classSubjects.map(row => ({
       id: row.id,
       classId: row.classId,
       subjectId: row.subjectId,
-      subject: {
-        id: row.subjectId,
-        name: row.subjectName,
-        shortName: row.subjectShortName,
-        schoolType: row.subjectSchoolType,
-      },
-      createdAt: row.createdAt,
+      subject: row.subject,
+      createdAt: row.createdAt.toISOString(),
     }));
 
     console.log('[SUBJECT] Subjects assigned successfully');
@@ -281,8 +270,7 @@ async function handleAssignToClass(body: {
     });
   } catch (error) {
     console.error('[SUBJECT] Assign error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to assign subjects';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to assign subjects. Please try again.' }, { status: 500 });
   }
 }
 
