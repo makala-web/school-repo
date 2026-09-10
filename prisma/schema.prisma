@@ -1,0 +1,603 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+// ============ SCHOOL SETUP ============
+model School {
+  id                    String    @id @default(cuid())
+  name                  String
+  schoolType            String // PRIMARY or SECONDARY
+  logo                  String? // base64 encoded logo (Logo 1 - left)
+  logo2                 String? // base64 encoded logo (Logo 2 - right, optional)
+  registrationNo        String?
+  council               String? // Halmashauri
+  region                String?
+  district              String?
+  ward                  String? // Kata
+  phone                 String?
+  email                 String?
+  headTeacherName       String?
+  headTeacherSign       String?
+  headTeacherComments   String?
+  classTeacherName      String?
+  classTeacherShortName String?
+  classTeacherComments  String?
+  ctGradeA_en           String?
+  ctGradeB_en           String?
+  ctGradeC_en           String?
+  ctGradeD_en           String?
+  ctGradeE_en           String?
+  ctGradeA_sw           String?
+  ctGradeB_sw           String?
+  ctGradeC_sw           String?
+  ctGradeD_sw           String?
+  ctGradeE_sw           String?
+  htGradeA_en           String?
+  htGradeB_en           String?
+  htGradeC_en           String?
+  htGradeD_en           String?
+  htGradeE_en           String?
+  htGradeA_sw           String?
+  htGradeB_sw           String?
+  htGradeC_sw           String?
+  htGradeD_sw           String?
+  htGradeE_sw           String?
+  academicYear          String? // e.g. "2026" - default for the school
+  term                  String? // e.g. "FIRST TERM" - default for the school
+  isDemo                Boolean   @default(false)
+  licenseType           String?   @default("DEMO")
+  licenseStatus         String?   @default("ACTIVE")
+  activationCode        String?
+  startDate             String?
+  expiryDate            String?
+  maxTeachers           Int?
+  maxDevices            Int?
+  maxStudents           Int?
+  lastValidatedAt       DateTime?
+  renewalRequestedAt    DateTime?
+  renewalRequestedBy    String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  classes                 Class[]
+  teachers                Teacher[]
+  exams                   Exam[]
+  users                   User[]
+  subjects                Subject[]
+  students                Student[]
+  gradingConfigs          GradingConfig[]
+  devices                 Device[]
+  invitations             Invitation[]
+  accessRequests          AccessRequest[]
+  classTeacherAssignments ClassTeacherAssignment[]
+  schoolLeadership        SchoolLeadership?
+  auditLogs               AuditLog[]
+  syncOperations          SyncOperation[]
+  syncChanges             SyncChange[]
+  syncConflicts           SyncConflict[]
+  syncSequence            SyncSequence?
+}
+
+// ============ USERS & AUTH ============
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  username           String    @unique
+  // Legacy hash retained for compatibility with the offline repository.
+  // New authentication uses passwordHash as the canonical field.
+  password           String
+  passwordHash       String?
+  fullName           String
+  role               String    @default("TEACHER") // TEACHER, SCHOOL_ADMIN, SUPER_ADMIN
+  active             Boolean   @default(true)
+  schoolId           String?
+  schoolType         String? // PRIMARY or SECONDARY - selected during registration
+  securityQuestion   String? // e.g. "What is your nickname?"
+  securityAnswer     String? // hashed answer
+  isDemoUser         Boolean   @default(false)
+  deviceId           String?
+  lastSchoolAccessAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  school             School?         @relation(fields: [schoolId], references: [id])
+  teacher            Teacher?
+  devices            Device[]
+  sentInvitations    Invitation[]    @relation("InvitationSender")
+  receivedInvitation Invitation?     @relation("InvitationReceiver")
+  sessions           AuthSession[]
+  syncOperations     SyncOperation[]
+}
+
+model AuthSession {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ============ DEVICES / INSTALLATIONS ============
+model Device {
+  id            String    @id @default(cuid())
+  deviceId      String // Unique device identifier (fingerprint)
+  deviceName    String? // User-friendly device name
+  platform      String? // e.g. "Windows", "Android", "iOS"
+  userAgent     String? // Browser user agent
+  schoolId      String
+  userId        String
+  status        String    @default("ACTIVE") // ACTIVE, REVOKED, SUSPENDED
+  activatedAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  deactivatedAt DateTime?
+  deactivatedBy String? // User ID who deactivated
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, userId])
+  @@index([schoolId])
+  @@index([userId])
+  @@index([deviceId])
+}
+
+// ============ TEACHER INVITATIONS ============
+model Invitation {
+  id               String    @id @default(cuid())
+  inviteCode       String    @unique
+  schoolId         String
+  senderId         String // School admin who sent invitation
+  receiverId       String?   @unique // User who accepted invitation
+  email            String
+  fullName         String?
+  role             String    @default("TEACHER")
+  assignedClasses  String // JSON string of class IDs
+  assignedSubjects String // JSON string of subject IDs
+  status           String    @default("PENDING") // PENDING, ACCEPTED, EXPIRED, REVOKED
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  sender   User   @relation("InvitationSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User?  @relation("InvitationReceiver", fields: [receiverId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId])
+  @@index([senderId])
+  @@index([inviteCode])
+  @@index([status])
+}
+
+// ============ TEACHERS ============
+model Teacher {
+  id        String   @id @default(cuid())
+  name      String
+  shortName String? // e.g. A.Sadru
+  sign      String? // signature short
+  phone     String?
+  schoolId  String
+  userId    String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school                  School                   @relation(fields: [schoolId], references: [id])
+  user                    User?                    @relation(fields: [userId], references: [id])
+  subjectClasses          TeacherSubject[]
+  classAssignments        Class[] // classes where this teacher is class teacher (legacy field)
+  classTeacherAssignments ClassTeacherAssignment[]
+  schoolLeadership        SchoolLeadership?
+}
+
+// ============ CLASSES & STREAMS ============
+model Class {
+  id             String   @id @default(cuid())
+  name           String // e.g. "STD 1", "Form 2"
+  stream         String? // e.g. "A", "B"
+  fullName       String // e.g. "STD 1 A", "Form 2 B"
+  schoolType     String // PRIMARY or SECONDARY
+  classTeacherId String?
+  schoolId       String
+  academicYear   String? // e.g. "2026"
+  term           String? // e.g. "FIRST TERM", "SECOND TERM"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  school                  School                   @relation(fields: [schoolId], references: [id])
+  classTeacher            Teacher?                 @relation(fields: [classTeacherId], references: [id])
+  students                Student[]
+  subjects                ClassSubject[]
+  exams                   Exam[]
+  attendance              Attendance[]
+  teacherSubjects         TeacherSubject[]
+  studentResults          StudentResult[]
+  tabia                   Tabia[]
+  classTeacherAssignments ClassTeacherAssignment[] @relation("ClassTeacherAssignments")
+}
+
+// ============ STUDENTS ============
+model Student {
+  id          String   @id @default(cuid())
+  admissionNo String?
+  fullName    String
+  gender      String // M or F
+  dob         String? // date of birth as string
+  parentName  String?
+  parentPhone String?
+  status      String   @default("ACTIVE") // ACTIVE, TRANSFERRED, GRADUATED
+  classId     String
+  schoolId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  class      Class           @relation(fields: [classId], references: [id])
+  school     School          @relation(fields: [schoolId], references: [id])
+  marks      MarksEntry[]
+  attendance Attendance[]
+  tabia      Tabia[]
+  results    StudentResult[]
+}
+
+// ============ SUBJECTS ============
+model Subject {
+  id         String   @id @default(cuid())
+  name       String // e.g. "Mathematics", "Biology"
+  shortName  String? // e.g. "MATH", "BIO"
+  schoolType String // PRIMARY, SECONDARY, or BOTH
+  schoolId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  school          School           @relation(fields: [schoolId], references: [id])
+  classSubjects   ClassSubject[]
+  teacherSubjects TeacherSubject[]
+}
+
+model ClassSubject {
+  id        String   @id @default(cuid())
+  classId   String
+  subjectId String
+  createdAt DateTime @default(now())
+
+  class   Class        @relation(fields: [classId], references: [id])
+  subject Subject      @relation(fields: [subjectId], references: [id])
+  marks   MarksEntry[]
+
+  @@unique([classId, subjectId])
+}
+
+model TeacherSubject {
+  id        String   @id @default(cuid())
+  teacherId String
+  subjectId String
+  classId   String
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id])
+  subject Subject @relation(fields: [subjectId], references: [id])
+  class   Class   @relation(fields: [classId], references: [id])
+
+  @@unique([teacherId, subjectId, classId])
+}
+
+// ============ EXAMS ============
+model Exam {
+  id           String   @id @default(cuid())
+  name         String // e.g. "Midterm", "Terminal", "Annual"
+  examType     String // MIDTERM, MONTHLY, TERMINAL, ANNUAL
+  classId      String
+  schoolId     String
+  academicYear String
+  term         String // FIRST TERM, SECOND TERM, THIRD TERM
+  examDate     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  class   Class           @relation(fields: [classId], references: [id])
+  school  School          @relation(fields: [schoolId], references: [id])
+  marks   MarksEntry[]
+  results StudentResult[]
+}
+
+// ============ MARKS ============
+model MarksEntry {
+  id             String   @id @default(cuid())
+  studentId      String
+  classSubjectId String
+  examId         String
+  marks          Float? // the actual score
+  grade          String? // computed grade (A, B, C, D, E, F)
+  remarks        String? // e.g. "Excellent", "Good"
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  student      Student      @relation(fields: [studentId], references: [id])
+  classSubject ClassSubject @relation(fields: [classSubjectId], references: [id])
+  exam         Exam         @relation(fields: [examId], references: [id])
+
+  @@unique([studentId, classSubjectId, examId])
+}
+
+// ============ ATTENDANCE ============
+model Attendance {
+  id        String   @id @default(cuid())
+  studentId String
+  classId   String
+  date      String // date of attendance
+  status    String // PRESENT, ABSENT, SICK, PERMISSION
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  class   Class   @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, classId, date])
+}
+
+// ============ TABIA / CHARACTER ============
+model Tabia {
+  id          String   @id @default(cuid())
+  studentId   String
+  classId     String
+  examId      String?
+  discipline  String? // A, B, C, D, E
+  hygiene     String? // Personal Hygiene / Self Cleanness
+  hardWorking String?
+  cooperation String? // Collaboration / Cooperation
+  honesty     String? // Honesty and Responsibility
+  leadership  String?
+  sports      String? // Participation in Sports
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  class   Class   @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, classId, examId])
+}
+
+// ============ STUDENT RESULTS (Computed) ============
+model StudentResult {
+  id                  String   @id @default(cuid())
+  studentId           String
+  examId              String
+  classId             String
+  totalMarks          Float?
+  averageMarks        Float?
+  grade               String? // Overall grade
+  division            String? // I, II, III, IV, 0 (secondary only)
+  points              Int? // NECTA points (secondary only)
+  rank                Int? // Position in class (only for COMPLETE students)
+  status              String   @default("INCOMPLETE") // COMPLETE or INCOMPLETE
+  subjectCount        Int      @default(0) // Number of subjects with marks
+  classTeacherComment String?
+  headTeacherComment  String?
+  closingDate         String?
+  openingDate         String?
+  classTeacherSign    String?
+  headTeacherSign     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  exam    Exam    @relation(fields: [examId], references: [id])
+  class   Class   @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, examId])
+}
+
+// ============ GRADING CONFIGURATION ============
+model GradingConfig {
+  id         String   @id @default(cuid())
+  schoolType String // PRIMARY or SECONDARY
+  grade      String // A, B, C, D, E, F
+  minMark    Int
+  maxMark    Int
+  remarks    String // Excellent, Very Good, etc.
+  points     Int? // NECTA points for secondary
+  division   String? // Division for secondary
+  schoolId   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id])
+}
+
+// ============ BACKUP LOG ============
+model BackupLog {
+  id         String   @id @default(cuid())
+  fileName   String
+  backupType String // FULL, STUDENTS, MARKS
+  fileSize   String?
+  createdAt  DateTime @default(now())
+}
+
+// ============ ACCESS REQUESTS ============
+model AccessRequest {
+  id               String    @id @default(cuid())
+  schoolName       String
+  schoolType       String // PRIMARY or SECONDARY
+  contactPerson    String
+  phone            String
+  email            String
+  location         String?
+  numberOfStudents Int?
+  numberOfTeachers Int?
+  requestedPlan    String? // DEMO, STANDARD, PREMIUM
+  message          String?
+  status           String    @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED
+  approvedBy       String? // User ID of Super Admin who approved
+  rejectionReason  String?
+  schoolId         String? // School ID if approved and created
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  approvedAt       DateTime?
+
+  school School? @relation(fields: [schoolId], references: [id])
+
+  @@index([status])
+  @@index([email])
+}
+
+// ============ CLASS TEACHER ASSIGNMENTS ============
+model ClassTeacherAssignment {
+  id           String   @id @default(cuid())
+  schoolId     String
+  classId      String
+  teacherId    String
+  academicYear String // e.g. "2026"
+  startDate    String // Date of assignment
+  endDate      String? // Date when assignment ended
+  status       String   @default("ACTIVE") // ACTIVE, INACTIVE, TRANSFERRED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class   Class   @relation("ClassTeacherAssignments", fields: [classId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, classId, academicYear, status])
+  @@index([schoolId])
+  @@index([classId])
+  @@index([teacherId])
+  @@index([status])
+}
+
+// ============ SCHOOL LEADERSHIP ============
+model SchoolLeadership {
+  id            String   @id @default(cuid())
+  schoolId      String   @unique
+  headTeacherId String?  @unique
+  startDate     String? // When head teacher started
+  endDate       String? // When assignment ended (for history)
+  status        String   @default("ACTIVE") // ACTIVE, INACTIVE
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  school      School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  headTeacher Teacher? @relation(fields: [headTeacherId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId])
+  @@index([headTeacherId])
+}
+
+// ============ AUDIT LOGS ============
+model AuditLog {
+  id         String   @id @default(cuid())
+  schoolId   String?
+  userId     String?
+  action     String // e.g. "SCHOOL_CREATED", "LICENSE_UPDATED", "CLASS_TEACHER_ASSIGNED"
+  entityType String // e.g. "SCHOOL", "LICENSE", "CLASS_TEACHER"
+  entityId   String?
+  changes    String? // JSON string of what changed
+  ipAddress  String?
+  userAgent  String?
+  status     String   @default("SUCCESS") // SUCCESS, FAILED
+  details    String? // Additional context
+  createdAt  DateTime @default(now())
+
+  school School? @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============ APP SETTINGS ============
+model AppSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+// ============ DURABLE CLOUD SYNC ============
+// These tables are additive. They do not replace the local SQLite database.
+model SyncOperation {
+  id            String    @id @default(cuid())
+  operationId   String
+  schoolId      String
+  userId        String
+  deviceId      String?
+  endpoint      String
+  method        String
+  operationType String
+  entityType    String?
+  entityId      String?
+  payload       String
+  status        String    @default("PROCESSING") // PROCESSING, PROCESSED, FAILED, CONFLICT
+  response      String?
+  error         String?
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, operationId])
+  @@index([schoolId, createdAt])
+  @@index([schoolId, status])
+}
+
+model SyncChange {
+  id          String    @id @default(cuid())
+  schoolId    String
+  sequence    Int
+  entityType  String
+  entityId    String
+  action      String // UPSERT or DELETE
+  version     Int       @default(1)
+  operationId String?
+  payload     String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, sequence])
+  @@index([schoolId, entityType, entityId])
+  @@index([schoolId, createdAt])
+}
+
+model SyncSequence {
+  id           String   @id @default(cuid())
+  schoolId     String   @unique
+  nextSequence Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+model SyncConflict {
+  id            String    @id @default(cuid())
+  schoolId      String
+  operationId   String
+  entityType    String
+  entityId      String
+  baseVersion   Int?
+  serverVersion Int?
+  clientPayload String
+  serverPayload String?
+  resolution    String    @default("PENDING") // PENDING, SERVER_WON, CLIENT_WON, MERGED
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
+  resolvedBy    String?
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, resolution])
+  @@index([schoolId, entityType, entityId])
+}

@@ -1,0 +1,668 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@source "../**/*.{js,ts,jsx,tsx,mdx}";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-shulea: #059669;
+  --color-shulea-light: #d1fae5;
+  --color-shulea-dark: #065f46;
+  --color-shulea-accent: #14b8a6;
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #fafaf9;
+  --foreground: #1f2a24;
+  --card: #ffffff;
+  --card-foreground: #1f2a24;
+  --popover: #ffffff;
+  --popover-foreground: #1f2a24;
+  --primary: #059669;
+  --primary-foreground: #f8fffb;
+  --secondary: #ecfdf5;
+  --secondary-foreground: #17352a;
+  --muted: #ecfdf5;
+  --muted-foreground: #647067;
+  --accent: #ecfdf5;
+  --accent-foreground: #17352a;
+  --destructive: #dc2626;
+  --border: #d7e6dd;
+  --input: #d7e6dd;
+  --ring: #059669;
+  --chart-1: #059669;
+  --chart-2: #0d9488;
+  --chart-3: #15803d;
+  --chart-4: #d97706;
+  --chart-5: #e11d48;
+  --sidebar: #f2fbf6;
+  --sidebar-foreground: #1f2a24;
+  --sidebar-primary: #059669;
+  --sidebar-primary-foreground: #f8fffb;
+  --sidebar-accent: #dcfce7;
+  --sidebar-accent-foreground: #17352a;
+  --sidebar-border: #d7e6dd;
+  --sidebar-ring: #059669;
+}
+
+.dark {
+  --background: #16211c;
+  --foreground: #f8fffb;
+  --card: #1f3129;
+  --card-foreground: #f8fffb;
+  --popover: #1f3129;
+  --popover-foreground: #f8fffb;
+  --primary: #10b981;
+  --primary-foreground: #10231b;
+  --secondary: #2d4037;
+  --secondary-foreground: #f8fffb;
+  --muted: #2d4037;
+  --muted-foreground: #b8c7bf;
+  --accent: #2d4037;
+  --accent-foreground: #f8fffb;
+  --destructive: #f87171;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: #10b981;
+  --chart-1: #10b981;
+  --chart-2: #14b8a6;
+  --chart-3: #22c55e;
+  --chart-4: #f59e0b;
+  --chart-5: #fb7185;
+  --sidebar: #1f3129;
+  --sidebar-foreground: #f8fffb;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #f8fffb;
+  --sidebar-accent: #2d4037;
+  --sidebar-accent-foreground: #f8fffb;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #10b981;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #a7b8af;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #647067;
+}
+
+/* Report preview density mirrors the generated print template for Secondary 10-13 subjects. */
+.print-area.report-card.report-density-compact {
+  font-size: var(--report-font-size, 10pt);
+  line-height: var(--report-line-height, 1.5);
+}
+
+.print-area.report-card.report-density-compact * {
+  overflow-wrap: anywhere;
+}
+
+.print-area.report-card.report-density-compact .report-header {
+  padding-bottom: var(--report-header-padding-bottom, 8px) !important;
+  margin-bottom: var(--report-header-margin-bottom, 10px) !important;
+}
+
+.print-area.report-card.report-density-compact .header-logo {
+  width: var(--report-logo-size, 65px) !important;
+  height: var(--report-logo-size, 65px) !important;
+}
+
+.print-area.report-card.report-density-compact .school-name {
+  font-size: var(--report-school-name-font-size, 15pt) !important;
+  line-height: 1.12 !important;
+}
+
+.print-area.report-card.report-density-compact .school-info,
+.print-area.report-card.report-density-compact .report-title .subtitle {
+  font-size: var(--report-small-font-size, 8.5pt) !important;
+  line-height: 1.25 !important;
+}
+
+.print-area.report-card.report-density-compact .report-title {
+  margin: var(--report-title-margin, 8px 0) !important;
+  padding: var(--report-title-padding, 5px 0) !important;
+}
+
+.print-area.report-card.report-density-compact .report-title h2 {
+  font-size: var(--report-title-font-size, 13pt) !important;
+  line-height: 1.15 !important;
+}
+
+.print-area.report-card.report-density-compact .student-info-bar,
+.print-area.report-card.report-density-compact .marks-table,
+.print-area.report-card.report-density-compact .results-summary,
+.print-area.report-card.report-density-compact .character-section,
+.print-area.report-card.report-density-compact .comments-grid {
+  margin-bottom: var(--report-section-gap, 10px) !important;
+}
+
+.print-area.report-card.report-density-compact .student-info-item {
+  padding: var(--report-info-padding-y, 4px) var(--report-info-padding-x, 8px) !important;
+}
+
+.print-area.report-card.report-density-compact .student-info-label,
+.print-area.report-card.report-density-compact .summary-label,
+.print-area.report-card.report-density-compact .comment-label,
+.print-area.report-card.report-density-compact .signature-label,
+.print-area.report-card.report-density-compact .parent-field-label {
+  font-size: var(--report-label-font-size, 7pt) !important;
+}
+
+.print-area.report-card.report-density-compact .student-info-value {
+  font-size: var(--report-info-font-size, 10pt) !important;
+  line-height: 1.18 !important;
+}
+
+.print-area.report-card.report-density-compact .marks-table {
+  table-layout: fixed !important;
+}
+
+.print-area.report-card.report-density-compact .marks-table th,
+.print-area.report-card.report-density-compact .marks-table td {
+  padding: var(--report-table-cell-y, 4px) var(--report-table-cell-x, 6px) !important;
+  font-size: var(--report-table-font-size, 9.5pt) !important;
+  line-height: var(--report-table-line-height, 1.35) !important;
+}
+
+.print-area.report-card.report-density-compact .marks-table th {
+  font-size: var(--report-table-head-font-size, 8.5pt) !important;
+  letter-spacing: 0 !important;
+}
+
+.print-area.report-card.report-density-compact .subject-cell {
+  font-size: var(--report-subject-font-size, 9.2pt) !important;
+}
+
+.print-area.report-card.report-density-compact .remarks-cell {
+  font-size: var(--report-remarks-font-size, 8.5pt) !important;
+}
+
+.print-area.report-card.report-density-compact .grade-badge {
+  padding: 0 var(--report-grade-badge-x, 6px) !important;
+  font-size: var(--report-grade-font-size, 9pt) !important;
+  line-height: 1.35 !important;
+}
+
+.print-area.report-card.report-density-compact .results-summary {
+  gap: var(--report-summary-gap, 5px) !important;
+}
+
+.print-area.report-card.report-density-compact .summary-item {
+  padding: var(--report-summary-padding, 6px) !important;
+}
+
+.print-area.report-card.report-density-compact .summary-value {
+  font-size: var(--report-summary-value-font-size, 14pt) !important;
+  line-height: 1.1 !important;
+}
+
+.print-area.report-card.report-density-compact .section-header {
+  padding-top: var(--report-section-header-y, 4px) !important;
+  padding-bottom: var(--report-section-header-y, 4px) !important;
+  font-size: var(--report-section-header-font-size, 9pt) !important;
+}
+
+.print-area.report-card.report-density-compact .traits-grid {
+  padding: var(--report-trait-padding, 8px) !important;
+}
+
+.print-area.report-card.report-density-compact .trait-item {
+  padding-top: var(--report-trait-item-y, 3px) !important;
+  padding-bottom: var(--report-trait-item-y, 3px) !important;
+}
+
+.print-area.report-card.report-density-compact .trait-label,
+.print-area.report-card.report-density-compact .trait-value {
+  font-size: var(--report-trait-font-size, 8.5pt) !important;
+}
+
+.print-area.report-card.report-density-compact .comments-grid {
+  gap: var(--report-comment-gap, 10px) !important;
+}
+
+.print-area.report-card.report-density-compact .comment-box {
+  padding: var(--report-comment-padding-y, 8px) var(--report-comment-padding-x, 10px) !important;
+}
+
+.print-area.report-card.report-density-compact .comment-label {
+  margin-bottom: var(--report-comment-label-gap, 4px) !important;
+}
+
+.print-area.report-card.report-density-compact .comment-text {
+  min-height: var(--report-comment-min-height, 24px) !important;
+  font-size: var(--report-comment-font-size, 9.5pt) !important;
+  line-height: 1.25 !important;
+}
+
+.print-area.report-card.report-density-compact .signatures-grid {
+  gap: var(--report-signature-gap, 40px) !important;
+  margin-top: var(--report-signature-margin-top, 12px) !important;
+  font-size: var(--report-signature-font-size, 9pt) !important;
+}
+
+.print-area.report-card.report-density-compact .dates-grid {
+  gap: var(--report-signature-gap, 40px) !important;
+  margin-top: var(--report-dates-margin-top, 10px) !important;
+  font-size: var(--report-dates-font-size, 9.5pt) !important;
+}
+
+.print-area.report-card.report-density-compact .parent-section {
+  padding: var(--report-parent-padding, 10px) !important;
+  margin-top: var(--report-parent-margin-top, 10px) !important;
+}
+
+.print-area.report-card.report-density-compact .parent-title {
+  font-size: var(--report-parent-title-font-size, 9pt) !important;
+  margin-bottom: var(--report-parent-title-gap, 8px) !important;
+  padding-bottom: var(--report-parent-title-padding, 4px) !important;
+}
+
+.print-area.report-card.report-density-compact .parent-fields {
+  gap: var(--report-parent-gap, 8px) !important;
+}
+
+.print-area.report-card.report-density-compact .parent-field {
+  font-size: var(--report-parent-field-font-size, 9pt) !important;
+}
+
+.print-area.report-card.report-density-compact .parent-field-line {
+  min-height: var(--report-parent-line-height, 30px) !important;
+}
+
+/* Print styles for report cards */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    font-size: 10px !important;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  aside,
+  header,
+  footer,
+  .print-hide {
+    display: none !important;
+  }
+  @page {
+    margin: 8mm;
+    size: A4;
+  }
+  /* Ensure tables print properly */
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+}
+
+/* Keep report pages comfortable to inspect on desktop and mobile. */
+.reports-content-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: #94a3b8 #f1f5f9;
+}
+
+.reports-content-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.reports-content-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+.reports-content-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border: 2px solid #f1f5f9;
+  border-radius: 8px;
+}
+
+/* ========================================
+   MOBILE UI UTILITIES
+   ======================================== */
+
+/* Safe area utilities for devices with notches/home indicators */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  
+  .pl-safe {
+    padding-left: env(safe-area-inset-left);
+  }
+  
+  .pr-safe {
+    padding-right: env(safe-area-inset-right);
+  }
+  
+  .px-safe {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* Fallback for devices without safe area support */
+@supports not (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: 0;
+  }
+  
+  .pt-safe {
+    padding-top: 0;
+  }
+}
+
+/* Touch-friendly button styles */
+.touch-button {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Mobile-optimized form inputs */
+.touch-input {
+  min-height: 44px;
+  font-size: 16px; /* Prevents zoom on iOS */
+}
+
+/* Active state feedback for touch */
+@media (hover: none) {
+  .active\:scale-95:active {
+    transform: scale(0.95);
+  }
+}
+
+/* Mobile bottom sheet styles */
+.mobile-sheet {
+  max-height: 70vh;
+  border-top-left-radius: 1rem;
+  border-top-right-radius: 1rem;
+}
+
+/* Hide scrollbar on mobile for cleaner UI */
+@media (max-width: 768px) {
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Mobile card styles */
+.mobile-card {
+  touch-action: pan-y;
+  user-select: none;
+}
+
+/* Prevent text selection on mobile buttons */
+.mobile-card:active {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Bottom navigation safe area */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Mobile-optimized table (converts to cards on small screens) */
+@media (max-width: 640px) {
+  .mobile-table thead {
+    display: none;
+  }
+  
+  .mobile-table tr {
+    display: block;
+    margin-bottom: 0.75rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+  }
+  
+  .mobile-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border: none;
+  }
+  
+  .mobile-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: #374151;
+    flex-shrink: 0;
+    min-width: 120px;
+  }
+  
+  /* Ensure Select component shows label properly */
+  .mobile-table td[data-label] > div {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .mobile-table td[data-label] .select-trigger {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .no-mobile-cards thead {
+    display: table-header-group;
+  }
+
+  .no-mobile-cards tr {
+    display: table-row;
+    margin-bottom: 0;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  .no-mobile-cards td {
+    display: table-cell;
+    justify-content: normal;
+    align-items: normal;
+    padding: 0.5rem;
+    border: 1px solid #e5e7eb;
+  }
+
+  .no-mobile-cards td::before {
+    content: none;
+  }
+
+  .report-preview-scroll {
+    margin-inline: -0.25rem;
+    padding: 0.75rem 0.5rem 1.25rem;
+    overflow-x: auto;
+    overflow-y: visible;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: auto;
+  }
+
+  .report-preview-scroll::-webkit-scrollbar {
+    height: 12px;
+  }
+
+  .report-preview-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+  }
+
+  .report-mobile-paper {
+    min-width: 680px;
+  }
+
+  .reports-content-scroll {
+    scrollbar-width: auto;
+    scrollbar-color: #94a3b8 #f1f5f9;
+  }
+
+  .reports-content-scroll::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  .reports-content-scroll::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 8px;
+  }
+
+  .reports-content-scroll::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border: 2px solid #f1f5f9;
+    border-radius: 8px;
+  }
+}
+
+/* Mobile Safe Area Handling */
+@supports (padding: max(0px)) {
+  .safe-area-top {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+  
+  .safe-area-bottom {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+  
+  .safe-area-left {
+    padding-left: max(0px, env(safe-area-inset-left));
+  }
+  
+  .safe-area-right {
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+  
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Mobile Touch Optimizations */
+@media (pointer: coarse) {
+  /* Increase touch targets on touch devices */
+  button,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
+  
+  /* Prevent zoom on focus for iOS */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="tel"],
+  input[type="url"],
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  
+  /* Active state feedback */
+  button:active,
+  [role="button"]:active,
+  a:active {
+    opacity: 0.7;
+    transform: scale(0.98);
+  }
+}
+
+/* Prevent text selection on UI elements */
+.no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Smooth scrolling for mobile */
+.scroll-smooth {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
