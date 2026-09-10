@@ -115,7 +115,7 @@ export default function SuperAdminDashboard() {
     licenseType: 'STANDARD',
     maxTeachers: 20,
     maxDevices: 20,
-    expiryDays: 365
+    expiryDate: (() => { const date = new Date(); date.setFullYear(date.getFullYear() + 1); return date.toISOString().split('T')[0] })()
   })
   
   const [licenseForm, setLicenseForm] = useState({
@@ -226,9 +226,11 @@ export default function SuperAdminDashboard() {
       // Generate activation code
       const activationCode = `SHL-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
       
-      // Calculate expiry date
-      const expiryDate = new Date()
-      expiryDate.setDate(expiryDate.getDate() + Number(newSchoolForm.expiryDays))
+      if (newSchoolForm.licenseType !== 'LIFETIME' && !newSchoolForm.expiryDate) {
+        toast.error('Please enter a license expiry date')
+        setProcessing(false)
+        return
+      }
       
       // Create school via school API
       const schoolData = await apiCall('/api/shulea/school', {
@@ -239,7 +241,7 @@ export default function SuperAdminDashboard() {
           licenseType: newSchoolForm.licenseType,
           licenseStatus: 'ACTIVE',
           activationCode,
-          expiryDate: expiryDate.toISOString().split('T')[0],
+          expiryDate: newSchoolForm.licenseType === 'LIFETIME' ? null : newSchoolForm.expiryDate,
           maxTeachers: newSchoolForm.maxTeachers,
           maxDevices: newSchoolForm.maxDevices,
           isDemo: false,
@@ -254,7 +256,7 @@ export default function SuperAdminDashboard() {
         licenseType: 'STANDARD',
         maxTeachers: 20,
         maxDevices: 20,
-        expiryDays: 365
+        expiryDate: (() => { const date = new Date(); date.setFullYear(date.getFullYear() + 1); return date.toISOString().split('T')[0] })()
       })
       loadSchools()
     } catch (err) {
@@ -968,13 +970,12 @@ export default function SuperAdminDashboard() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="expiry-days">License Duration (Days)</Label>
+              <Label htmlFor="new-expiry-date">License Expiry Date</Label>
               <Input
-                id="expiry-days"
-                type="number"
-                value={newSchoolForm.expiryDays}
-                onChange={(e) => setNewSchoolForm({ ...newSchoolForm, expiryDays: Number(e.target.value) })}
-                min="1"
+                id="new-expiry-date"
+                type="date"
+                value={newSchoolForm.expiryDate}
+                onChange={(e) => setNewSchoolForm({ ...newSchoolForm, expiryDate: e.target.value })}
               />
             </div>
 

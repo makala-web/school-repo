@@ -16,6 +16,10 @@ class ConnectionManagerClass {
     return this.mode
   }
 
+  private isBrowser(): boolean {
+    return typeof window !== 'undefined'
+  }
+
   isMobile(): boolean {
     return this.mode === 'sqlite'
   }
@@ -54,6 +58,10 @@ class ConnectionManagerClass {
 
   async query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]> {
     try {
+      if (this.isBrowser()) {
+        const sqlite = await this.getSQLite()
+        return sqlite.query<T>(sql, params)
+      }
       const isMobileEnv = this.isMobile()
       if (this.mode === 'prisma' || (this.mode === 'auto' && !isMobileEnv)) {
         const prisma = await this.getPrisma()
@@ -74,6 +82,11 @@ class ConnectionManagerClass {
 
   async execute(sql: string, params?: unknown[]): Promise<void> {
     try {
+      if (this.isBrowser()) {
+        const sqlite = await this.getSQLite()
+        await sqlite.execute(sql, params)
+        return
+      }
       const isMobileEnv = this.isMobile()
       if (this.mode === 'prisma' || (this.mode === 'auto' && !isMobileEnv)) {
         const prisma = await this.getPrisma()
@@ -105,6 +118,11 @@ class ConnectionManagerClass {
 
   async transaction(queries: Array<{ sql: string; params?: unknown[] }>): Promise<void> {
     try {
+      if (this.isBrowser()) {
+        const sqlite = await this.getSQLite()
+        await sqlite.transaction(queries)
+        return
+      }
       const isMobileEnv = this.isMobile()
       if (this.mode === 'prisma' || (this.mode === 'auto' && !isMobileEnv)) {
         throw new Error('Transaction not supported in Prisma mode via ConnectionManager. Use Prisma transactions directly.')

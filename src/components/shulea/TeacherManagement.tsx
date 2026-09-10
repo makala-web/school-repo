@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import { toast } from 'sonner'
-import { Users, Plus, Mail, UserPlus, Copy, Check, X, MoreVertical, Trash2, Shield } from 'lucide-react'
+import { Users, Plus, Mail, UserPlus, Copy, Check, X, MoreVertical, Trash2, Shield, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,6 +35,14 @@ interface Teacher {
     role: string
     active: boolean
   }
+  subjectClasses?: {
+    id: string
+    subjectId: string
+    classId: string
+    subject?: { name: string; shortName?: string | null }
+    class?: { name: string; fullName: string }
+  }[]
+  classAssignments?: { id: string; name: string; fullName: string }[]
 }
 
 interface Invitation {
@@ -77,6 +85,11 @@ export default function TeacherManagement() {
     , assignedSubjects: [] as string[]
   })
   const [inviting, setInviting] = useState(false)
+  const [assignmentDialog, setAssignmentDialog] = useState(false)
+  const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null)
+  const [assignmentClassId, setAssignmentClassId] = useState('')
+  const [assignmentSubjectIds, setAssignmentSubjectIds] = useState<string[]>([])
+  const [savingAssignments, setSavingAssignments] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -158,6 +171,59 @@ export default function TeacherManagement() {
       loadData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to revoke invitation')
+    }
+  }
+
+  function openAssignmentDialog(teacher: Teacher) {
+    const classId = teacher.classAssignments?.[0]?.id || teacher.subjectClasses?.[0]?.classId || ''
+    setSelectedTeacher(teacher)
+    setAssignmentClassId(classId)
+    setAssignmentSubjectIds((teacher.subjectClasses || [])
+      .filter(assignment => assignment.classId === classId)
+      .map(assignment => assignment.subjectId))
+    setAssignmentDialog(true)
+  }
+
+  function changeAssignmentClass(classId: string) {
+    setAssignmentClassId(classId)
+    setAssignmentSubjectIds((selectedTeacher?.subjectClasses || [])
+      .filter(assignment => assignment.classId === classId)
+      .map(assignment => assignment.subjectId))
+  }
+
+  async function saveAssignments() {
+    if (!selectedTeacher || !currentSchool?.id || !currentUser?.id || !assignmentClassId) {
+      toast.error('Please select a class')
+      return
+    }
+    setSavingAssignments(true)
+    try {
+      await apiCall('/api/shulea/class-teacher-assignments', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'assign', schoolId: currentSchool.id, teacherId: selectedTeacher.id,
+          classId: assignmentClassId, academicYear: new Date().getFullYear().toString(),
+          startDate: new Date().toISOString().slice(0, 10), actorUserId: currentUser.id,
+        }),
+      })
+
+      const existing = (selectedTeacher.subjectClasses || []).filter(a => a.classId === assignmentClassId)
+      const selected = new Set(assignmentSubjectIds)
+      await Promise.all([
+        ...existing.filter(a => !selected.has(a.subjectId)).map(a => apiCall('/api/shulea/teachers', {
+          method: 'POST', body: JSON.stringify({ action: 'remove-assignment', schoolId: currentSchool.id, assignmentId: a.id, actorUserId: currentUser.id }),
+        })),
+        ...assignmentSubjectIds.filter(id => !existing.some(a => a.subjectId === id)).map(subjectId => apiCall('/api/shulea/teachers', {
+          method: 'POST', body: JSON.stringify({ action: 'assign-subject', schoolId: currentSchool.id, teacherId: selectedTeacher.id, subjectId, classId: assignmentClassId, actorUserId: currentUser.id }),
+        })),
+      ])
+      toast.success('Teacher assignments updated successfully')
+      setAssignmentDialog(false)
+      await loadData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update teacher assignments')
+    } finally {
+      setSavingAssignments(false)
     }
   }
 
@@ -256,6 +322,7 @@ export default function TeacherManagement() {
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -268,6 +335,12 @@ export default function TeacherManagement() {
                             <p className="text-xs text-gray-500">{teacher.shortName}</p>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
+                          <Settings2 className="mr-2 h-4 w-4" />
+                          Manage
+                        </Button>
                       </TableCell>
                       <TableCell>
                         {teacher.user?.email || teacher.email || '-'}
@@ -373,6 +446,39 @@ export default function TeacherManagement() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={assignmentDialog} onOpenChange={setAssignmentDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Manage Teacher Assignments</DialogTitle>
+            <DialogDescription>Change the class and subjects assigned to {selectedTeacher?.name || 'this teacher'}.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="assignment-class">Class</Label>
+              <select id="assignment-class" value={assignmentClassId} onChange={(event) => changeAssignmentClass(event.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2">
+                <option value="">Select a class</option>
+                {availableClasses.map(item => <option key={item.id} value={item.id}>{item.fullName}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Subjects</Label>
+              <div className="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">
+                {availableSubjects.map(item => (
+                  <label key={item.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={assignmentSubjectIds.includes(item.id)} onChange={(event) => setAssignmentSubjectIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} />
+                    {item.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignmentDialog(false)} disabled={savingAssignments}>Cancel</Button>
+            <Button onClick={saveAssignments} disabled={savingAssignments || !assignmentClassId}>{savingAssignments ? 'Saving...' : 'Save Assignments'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Invite Dialog */}
       <Dialog open={inviteDialog} onOpenChange={setInviteDialog}>
