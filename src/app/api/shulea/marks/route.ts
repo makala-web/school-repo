@@ -117,9 +117,10 @@ export async function GET(request: NextRequest) {
       const classSubject = await db.classSubject.findFirst({
         where: { classId, subjectId },
       });
-      if (classSubject) {
-        where.classSubjectId = classSubject.id;
+      if (!classSubject) {
+        return NextResponse.json({ error: 'The selected subject is not assigned to this class' }, { status: 400 });
       }
+      where.classSubjectId = classSubject.id;
     } else {
       // Filter by class via classSubject
       const classSubjectIds = classRecord.subjects

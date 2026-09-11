@@ -303,7 +303,18 @@ export class ClassRepository {
       throw new Error('Class not found')
     }
 
-    await prismaDb.class.delete({ where: { id } })
+    await prismaDb.$transaction(async (tx) => {
+      await tx.marksEntry.deleteMany({ where: { OR: [{ student: { classId: id } }, { classSubject: { classId: id } }, { exam: { classId: id } }] } })
+      await tx.studentResult.deleteMany({ where: { classId: id } })
+      await tx.attendance.deleteMany({ where: { classId: id } })
+      await tx.tabia.deleteMany({ where: { classId: id } })
+      await tx.exam.deleteMany({ where: { classId: id } })
+      await tx.teacherSubject.deleteMany({ where: { classId: id } })
+      await tx.classTeacherAssignment.deleteMany({ where: { classId: id } })
+      await tx.classSubject.deleteMany({ where: { classId: id } })
+      await tx.student.deleteMany({ where: { classId: id } })
+      await tx.class.delete({ where: { id } })
+    })
   }
 
   private static async deleteSQLite(id: string): Promise<void> {
@@ -314,7 +325,17 @@ export class ClassRepository {
       throw new Error('Class not found')
     }
 
-    await conn.execute('DELETE FROM Class WHERE id = ?', [id])
+    await conn.transaction([
+      { sql: 'DELETE FROM MarksEntry WHERE studentId IN (SELECT id FROM Student WHERE classId = ?) OR classSubjectId IN (SELECT id FROM ClassSubject WHERE classId = ?) OR examId IN (SELECT id FROM Exam WHERE classId = ?)', params: [id, id, id] },
+      { sql: 'DELETE FROM StudentResult WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM Attendance WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM Tabia WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM Exam WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM TeacherSubject WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM ClassSubject WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM Student WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM Class WHERE id = ?', params: [id] },
+    ])
   }
 
   // Get students in class

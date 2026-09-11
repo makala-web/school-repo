@@ -172,7 +172,21 @@ export async function DELETE(request: NextRequest) {
     }
     if (existing.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Cross-school class access denied' }, { status: 403 })
 
-    await db.class.delete({ where: { id } });
+    // Class has dependent academic records without database-level cascades.
+    // Remove them in dependency order so PostgreSQL does not return a generic
+    // foreign-key HTTP 500 to the administrator.
+    await db.$transaction(async (tx) => {
+      await tx.marksEntry.deleteMany({ where: { OR: [{ student: { classId: id } }, { classSubject: { classId: id } }, { exam: { classId: id } }] } })
+      await tx.studentResult.deleteMany({ where: { classId: id } })
+      await tx.attendance.deleteMany({ where: { classId: id } })
+      await tx.tabia.deleteMany({ where: { classId: id } })
+      await tx.exam.deleteMany({ where: { classId: id } })
+      await tx.teacherSubject.deleteMany({ where: { classId: id } })
+      await tx.classTeacherAssignment.deleteMany({ where: { classId: id } })
+      await tx.classSubject.deleteMany({ where: { classId: id } })
+      await tx.student.deleteMany({ where: { classId: id } })
+      await tx.class.delete({ where: { id } })
+    })
 
     return NextResponse.json({ message: 'Class deleted successfully' });
   } catch (error) {

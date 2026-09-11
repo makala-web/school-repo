@@ -263,8 +263,8 @@ export default function MarksEntry() {
       setStudents(fetchedStudents)
       setMarkRows(rows)
       setDataLoaded(true)
-    } catch {
-      toast.error('Failed to load marks')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load marks')
     } finally {
       setLoading(false)
     }
