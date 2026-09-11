@@ -601,12 +601,17 @@ export default function MarksEntry() {
                 <SelectTrigger>
                   <SelectValue placeholder="Select subject" />
                 </SelectTrigger>
-                <SelectContent>
-                  {subjects.map((subj) => (
-                    <SelectItem key={subj.id} value={subj.id}>{subj.subjectName}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SelectContent>
+                {subjects.map((subj) => (
+                  <SelectItem key={subj.id} value={subj.id}>{subj.subjectName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedClass && subjects.length === 0 && (
+              <p className="mt-2 text-sm text-amber-700">
+                No subjects have been assigned to this class yet. Please contact the School Admin.
+              </p>
+            )}
             </div>
           </div>
         </CardContent>

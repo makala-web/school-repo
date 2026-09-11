@@ -8,7 +8,7 @@ import { apiCall, resizeImageFile } from '@/lib/utils'
 import { DEMO_ACCESS_DETAILS, getSchoolLicenseStatus } from '@/lib/access-control'
 import { toast } from 'sonner'
 import {
-  Loader2, Save, School, BookOpen, Users, Key, Pencil, Upload, GraduationCap, Sparkles, ShieldCheck, RefreshCw
+  Loader2, Save, School, BookOpen, Users, Key, Pencil, Upload, GraduationCap, Sparkles, ShieldCheck, RefreshCw, Power
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -501,6 +501,20 @@ export default function SettingsView() {
       toast.error(err instanceof Error ? err.message : 'Failed to create user')
     } finally {
       setUserSaving(false)
+    }
+  }
+
+  async function handleToggleUser(user: UserData) {
+    if (!currentSchool?.id || user.id === currentUser?.id) return
+    try {
+      await apiCall('/api/shulea/users', {
+        method: 'PUT',
+        body: JSON.stringify({ id: user.id, active: !user.active }),
+      })
+      toast.success(user.active ? 'User deactivated successfully' : 'User activated successfully')
+      await loadUsers()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update user status')
     }
   }
 
@@ -1171,6 +1185,7 @@ export default function SettingsView() {
                         <TableHead>Full Name</TableHead>
                         <TableHead>Role</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1188,6 +1203,14 @@ export default function SettingsView() {
                               <Badge variant="outline" className={user.active ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}>
                                 {user.active ? 'Active' : 'Inactive'}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {user.id !== currentUser?.id && user.role !== 'SUPER_ADMIN' && (
+                                <Button variant="outline" size="sm" onClick={() => handleToggleUser(user)}>
+                                  <Power className="mr-2 h-4 w-4" />
+                                  {user.active ? 'Deactivate' : 'Activate'}
+                                </Button>
+                              )}
                             </TableCell>
                           </TableRow>
                         ))

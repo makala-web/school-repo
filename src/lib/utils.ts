@@ -202,6 +202,74 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     if (params.id) return ClassesApi.getById(params.id as string)
     return ClassesApi.list(params)
   },
+  // Teacher workspace reads. These local adapters keep an already-authenticated
+  // teacher usable offline after the authorized device has been hydrated.
+  '/api/shulea/teachers': async (params, method) => {
+    if (method && method !== 'GET') throw new Error('Teacher administration requires an internet connection')
+    const schoolId = String(params.schoolId || '')
+    const teachers = await ConnectionManager.query<Record<string, unknown>>(
+      'SELECT id, name, shortName, email, phone, userId, schoolId FROM Teacher WHERE schoolId = ? ORDER BY name ASC',
+      [schoolId],
+    )
+    return { teachers }
+  },
+  '/api/shulea/teacher-classes': async (params, method) => {
+    if (method && method !== 'GET') throw new Error('Teacher administration requires an internet connection')
+    const teacherId = String(params.teacherId || '')
+    const schoolId = String(params.schoolId || '')
+    const classTeacherRows = await ConnectionManager.query<Record<string, unknown>>(
+      'SELECT id, name, fullName, classTeacherId FROM Class WHERE schoolId = ? AND classTeacherId = ? ORDER BY name ASC',
+      [schoolId, teacherId],
+    )
+    const subjectRows = await ConnectionManager.query<Record<string, unknown>>(
+      `SELECT c.id, c.name, c.fullName, ts.subjectId, s.name AS subjectName
+       FROM TeacherSubject ts
+       JOIN Class c ON c.id = ts.classId
+       JOIN Subject s ON s.id = ts.subjectId
+       WHERE ts.teacherId = ? AND c.schoolId = ? ORDER BY c.name ASC, s.name ASC`,
+      [teacherId, schoolId],
+    )
+    const classTeacherAssignments = classTeacherRows.map(row => ({
+      id: String(row.id), name: String(row.name), fullName: String(row.fullName),
+      role: 'CLASS_TEACHER', subjects: subjectRows.filter(item => item.id === row.id).map(item => String(item.subjectName)),
+    }))
+    const subjectOnlyAssignments = subjectRows
+      .filter(row => !classTeacherRows.some(item => item.id === row.id))
+      .reduce<Array<Record<string, unknown>>>((items, row) => {
+        const existing = items.find(item => item.id === row.id)
+        if (existing) (existing.subjects as string[]).push(String(row.subjectName))
+        else items.push({ id: String(row.id), name: String(row.name), fullName: String(row.fullName), role: 'SUBJECT_TEACHER', subject: String(row.subjectName), subjects: [String(row.subjectName)] })
+        return items
+      }, [])
+    return {
+      teacher: { id: teacherId, schoolId },
+      classTeacherAssignments,
+      subjectOnlyAssignments,
+      totalClasses: classTeacherAssignments.length + subjectOnlyAssignments.length,
+      isMultiClassTeacher: classTeacherAssignments.length > 1,
+    }
+  },
+  '/api/shulea/teacher-students': async (params, method) => {
+    if (method && method !== 'GET') throw new Error('Teacher administration requires an internet connection')
+    const teacherId = String(params.teacherId || '')
+    const schoolId = String(params.schoolId || '')
+    const classRows = await ConnectionManager.query<{ id: string }>(
+      `SELECT id FROM Class WHERE schoolId = ? AND classTeacherId = ?
+       UNION SELECT ts.classId AS id FROM TeacherSubject ts JOIN Class c ON c.id = ts.classId WHERE ts.teacherId = ? AND c.schoolId = ?`,
+      [schoolId, teacherId, teacherId, schoolId],
+    )
+    if (!classRows.length) return { students: [], totalCount: 0, authorizedClasses: [], isMultiClass: false }
+    const placeholders = classRows.map(() => '?').join(', ')
+    const students = await ConnectionManager.query<Record<string, unknown>>(
+      `SELECT s.*, c.name AS className, c.fullName AS classFullName FROM Student s JOIN Class c ON c.id = s.classId WHERE s.schoolId = ? AND s.status = 'ACTIVE' AND s.classId IN (${placeholders}) ORDER BY c.name ASC, s.fullName ASC`,
+      [schoolId, ...classRows.map(row => row.id)],
+    )
+    const authorizedClasses = await ConnectionManager.query<Record<string, unknown>>(
+      `SELECT id, name, fullName FROM Class WHERE id IN (${placeholders}) ORDER BY name ASC`,
+      classRows.map(row => row.id),
+    )
+    return { students, totalCount: students.length, authorizedClasses, isMultiClass: authorizedClasses.length > 1 }
+  },
   // School
   '/api/shulea/school': async (params, method) => {
     if (method === 'POST' && params.id) {
@@ -538,8 +606,12 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
   try {
     return await apiCallWeb(endpoint, options)
   } catch (error) {
-    const networkFailed = error instanceof TypeError || (isBrowser && navigator.onLine === false)
-    if (isBrowser && networkFailed && isMappedEndpoint) {
+    const errorText = error instanceof Error ? error.message : String(error)
+    const serverUnavailable = /HTTP 5\d{2}/.test(errorText) || errorText.includes('temporarily unavailable')
+    const isLoginRequest = endpoint === '/api/shulea/auth' && ['login', 'demo-login'].includes(authAction || '')
+    const offlineCapableRequest = Boolean(currentUser?.id && currentUser.schoolId) && !isLoginRequest
+    const networkFailed = error instanceof TypeError || (isBrowser && navigator.onLine === false) || (serverUnavailable && offlineCapableRequest)
+    if (isBrowser && networkFailed && isMappedEndpoint && offlineCapableRequest) {
       ConnectionManager.setMode('sqlite')
       const localOptions = await prepareOfflineOptions(endpoint, options)
       const result = await apiCallMobile(endpoint, localOptions)
