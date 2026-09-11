@@ -205,6 +205,7 @@ export default function SubjectManagement() {
         method: 'POST',
         body: JSON.stringify({
           action: 'assign-to-class',
+          schoolId: currentSchool?.id,
           classId: assignClassId,
           subjectIds: Array.from(assignedSubjectIds),
         }),

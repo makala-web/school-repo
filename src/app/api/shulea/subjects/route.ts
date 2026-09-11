@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { SubjectRepository } from '@/repositories/SubjectRepository';
 import { ConnectionManager } from '@/services/database/ConnectionManager';
-import { getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+import { canAccessClass, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
 import { getMasterSubjects, getMasterSubjectNames } from '@/lib/subject-catalogue';
 
 // Required for static export
@@ -79,6 +79,9 @@ async function handleGetClassSubjects(request: NextRequest) {
     const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
     if (!actor || !classRecord || actor.role === 'SUPER_ADMIN' || actor.schoolId !== classRecord.schoolId) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+    if (actor.role === 'TEACHER' && !(await canAccessClass(actor, classId, { allowSubjectAssignment: true }))) {
+      return NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 })
     }
     const classSubjects = await db.classSubject.findMany({
       where: { classId },

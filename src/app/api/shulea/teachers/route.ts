@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
     const teachers = await db.teacher.findMany({
       where,
       include: {
-        school: { select: { name: true } },
+      school: { select: { name: true } },
+        user: { select: { id: true, email: true, fullName: true, role: true, active: true } },
         subjectClasses: {
           include: {
             subject: { select: { name: true, shortName: true } },
