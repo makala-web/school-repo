@@ -336,12 +336,6 @@ export default function TeacherManagement() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
-                          <Settings2 className="mr-2 h-4 w-4" />
-                          Manage
-                        </Button>
-                      </TableCell>
                       <TableCell>
                         {teacher.user?.email || teacher.email || '-'}
                       </TableCell>
@@ -354,6 +348,12 @@ export default function TeacherManagement() {
                         ) : (
                           <Badge className="bg-red-100 text-red-700 border-red-200">Inactive</Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
+                          <Settings2 className="mr-2 h-4 w-4" />
+                          Manage
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
