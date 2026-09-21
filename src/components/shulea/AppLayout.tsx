@@ -17,7 +17,8 @@ import { MobileBottomNav } from '@/components/MobileBottomNav'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { apiCall } from '@/lib/utils'
 import { toast } from 'sonner'
-import { flushOfflineMutations, getOfflineSyncStatus, type OfflineSyncStatus } from '@/services/database/OfflineSyncQueue'
+import { getOfflineSyncStatus, retryDeadLetterMutations, type OfflineSyncStatus } from '@/services/database/OfflineSyncQueue'
+import { runAuthorizedSyncCycle } from '@/services/database/CloudSyncHydrator'
 import Dashboard from '@/components/shulea/Dashboard'
 import ClassManagement from '@/components/shulea/ClassManagement'
 import StudentManagement from '@/components/shulea/StudentManagement'
@@ -239,7 +240,7 @@ export default function AppLayout() {
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [renewalSaving, setRenewalSaving] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
-  const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>({ pending: 0, failed: 0, nextRetryAt: null, lastError: null })
+  const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>({ pending: 0, failed: 0, deadLetter: 0, nextRetryAt: null, lastError: null })
   const licenseStatus = getSchoolLicenseStatus({
     status: currentSchool?.licenseStatus || currentUser?.school?.licenseStatus || 'ACTIVE',
     expiryDate: currentSchool?.expiryDate || currentUser?.school?.expiryDate || undefined,
@@ -321,7 +322,7 @@ export default function AppLayout() {
       const online = navigator.onLine
       setIsOnline(online)
       if (online && currentUser?.id && currentUser.schoolId) {
-        await flushOfflineMutations({ userId: currentUser.id, schoolId: currentUser.schoolId })
+        await runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId })
       }
       if (currentUser?.id && currentUser.schoolId) {
         setSyncStatus(await getOfflineSyncStatus({ userId: currentUser.id, schoolId: currentUser.schoolId }))
@@ -343,6 +344,15 @@ export default function AppLayout() {
       await fetch('/api/shulea/session', { method: 'POST', body: JSON.stringify({ action: 'logout' }), headers: { 'Content-Type': 'application/json' } })
     } finally {
       logout()
+    }
+  }
+
+  async function retryDeadLetters() {
+    if (!currentUser?.id || !currentUser.schoolId) return
+    const retried = await retryDeadLetterMutations({ userId: currentUser.id, schoolId: currentUser.schoolId })
+    if (retried > 0) {
+      await runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId })
+      setSyncStatus(await getOfflineSyncStatus({ userId: currentUser.id, schoolId: currentUser.schoolId }))
     }
   }
 
@@ -483,9 +493,16 @@ export default function AppLayout() {
          {isOnline && syncStatus.pending > 0 && (
            <div className={`mx-4 mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs md:mx-6 ${syncStatus.failed > 0 ? 'border-red-200 bg-red-50 text-red-900' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
              <CloudUpload className="h-4 w-4 shrink-0" />
-             <span>{syncStatus.failed > 0
+             <span className="flex-1">{syncStatus.deadLetter > 0
+               ? `${syncStatus.deadLetter} synchronization change(s) need attention. Your local data is preserved.`
+               : syncStatus.failed > 0
                ? `${syncStatus.failed} synchronization attempt(s) failed. Your local data is preserved and will retry.`
                : `${syncStatus.pending} offline change(s) waiting to sync.`}</span>
+             {syncStatus.deadLetter > 0 && (
+               <Button type="button" variant="outline" size="sm" onClick={() => void retryDeadLetters()} className="shrink-0 border-red-300 bg-white text-red-900 hover:bg-red-100">
+                 Retry
+               </Button>
+             )}
            </div>
          )}
 

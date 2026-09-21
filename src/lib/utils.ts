@@ -132,11 +132,180 @@ export const SECONDARY_SUBJECTS = SECONDARY_SUBJECTS_2026
 
 // API helper - supports both web (fetch) and mobile (direct API services)
 import { ConnectionManager } from '@/services/database/ConnectionManager'
-import { enqueueOfflineMutation, flushOfflineMutations } from '@/services/database/OfflineSyncQueue'
+import { enqueueOfflineMutation } from '@/services/database/OfflineSyncQueue'
+import { runAuthorizedSyncCycle } from '@/services/database/CloudSyncHydrator'
 import { getUserFriendlyError } from '@/lib/user-friendly-errors'
 import { StudentsApi, ClassesApi, SchoolApi, SubjectsApi, ExamsApi, MarksApi, AuthApi, UsersApi, TabiaApi, ResultsApi, SeedApi, SmsApi, BackupApi, AttendanceApi } from '@/services/api'
 import { importStudentsFromCsv, importStudentsFromFile } from '@/services/api/students'
 import { bulkSaveMarks, computeMarksResults } from '@/services/api/marks'
+
+function newLocalId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+async function listLocalClassTeacherAssignments(params: Record<string, unknown>) {
+  const currentUser = useAppStore.getState().currentUser
+  const schoolId = String(params.schoolId || currentUser?.schoolId || '')
+  const includeHistory = String(params.includeHistory || '') === 'true'
+  if (!schoolId || currentUser?.schoolId !== schoolId || !['SCHOOL_ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role || '')) {
+    throw new Error('School administrator access required')
+  }
+
+  let sql = `
+    SELECT a.*,
+      c.id AS class_id, c.name AS class_name, c.fullName AS class_fullName,
+      t.id AS teacher_id, t.name AS teacher_name, t.shortName AS teacher_shortName, t.sign AS teacher_sign, t.phone AS teacher_phone, t.schoolId AS teacher_schoolId, t.userId AS teacher_userId,
+      s.id AS school_id, s.name AS school_name, s.schoolType AS school_schoolType
+    FROM ClassTeacherAssignment a
+    JOIN Class c ON c.id = a.classId
+    JOIN Teacher t ON t.id = a.teacherId
+    JOIN School s ON s.id = a.schoolId
+    WHERE a.schoolId = ?
+  `
+  const queryParams: unknown[] = [schoolId]
+  if (params.classId) {
+    sql += ' AND a.classId = ?'
+    queryParams.push(String(params.classId))
+  }
+  if (params.academicYear) {
+    sql += ' AND a.academicYear = ?'
+    queryParams.push(String(params.academicYear))
+  }
+  if (!includeHistory) sql += " AND a.status = 'ACTIVE'"
+  sql += ' ORDER BY c.name ASC'
+
+  const rows = await ConnectionManager.query<Record<string, unknown>>(sql, queryParams)
+  return {
+    assignments: rows.map(row => ({
+      id: String(row.id),
+      schoolId: String(row.schoolId),
+      classId: String(row.classId),
+      teacherId: String(row.teacherId),
+      academicYear: String(row.academicYear),
+      startDate: String(row.startDate),
+      endDate: row.endDate ? String(row.endDate) : null,
+      status: String(row.status),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+      class: { id: String(row.class_id), name: String(row.class_name), fullName: String(row.class_fullName) },
+      teacher: {
+        id: String(row.teacher_id),
+        name: String(row.teacher_name),
+        shortName: row.teacher_shortName ? String(row.teacher_shortName) : null,
+        sign: row.teacher_sign ? String(row.teacher_sign) : null,
+        phone: row.teacher_phone ? String(row.teacher_phone) : null,
+        schoolId: String(row.teacher_schoolId),
+        userId: row.teacher_userId ? String(row.teacher_userId) : null,
+      },
+      school: { id: String(row.school_id), name: String(row.school_name), schoolType: String(row.school_schoolType) },
+    })),
+    total: rows.length,
+  }
+}
+
+async function assignLocalClassTeacher(params: Record<string, unknown>) {
+  const currentUser = useAppStore.getState().currentUser
+  const id = String(params.id || newLocalId())
+  const schoolId = String(params.schoolId || currentUser?.schoolId || '')
+  const classId = String(params.classId || '')
+  const teacherId = String(params.teacherId || '')
+  const academicYear = String(params.academicYear || new Date().getFullYear())
+  const startDate = String(params.startDate || new Date().toISOString().slice(0, 10))
+  if (!schoolId || currentUser?.schoolId !== schoolId || currentUser?.role !== 'SCHOOL_ADMIN') {
+    throw new Error('School administrator access required')
+  }
+  if (!classId || !teacherId) throw new Error('Class and teacher are required')
+
+  const [classRecord] = await ConnectionManager.query<{ schoolId: string; fullName: string }>('SELECT schoolId, fullName FROM Class WHERE id = ? LIMIT 1', [classId])
+  const [teacher] = await ConnectionManager.query<{ schoolId: string; name: string }>('SELECT schoolId, name FROM Teacher WHERE id = ? LIMIT 1', [teacherId])
+  if (!classRecord || classRecord.schoolId !== schoolId) throw new Error('Class not found or does not belong to school')
+  if (!teacher || teacher.schoolId !== schoolId) throw new Error('Teacher not found or does not belong to school')
+
+  const now = new Date().toISOString()
+  const existing = await ConnectionManager.query<{ id: string; teacherId: string }>(
+    "SELECT id, teacherId FROM ClassTeacherAssignment WHERE schoolId = ? AND classId = ? AND academicYear = ? AND status = 'ACTIVE' LIMIT 1",
+    [schoolId, classId, academicYear],
+  )
+  if (existing[0]?.teacherId === teacherId) {
+    return {
+      message: 'This teacher is already assigned to the selected class for this academic year.',
+      assignment: (await listLocalClassTeacherAssignments({ schoolId, classId, academicYear })).assignments[0],
+      alreadyExists: true,
+    }
+  }
+
+  await ConnectionManager.transaction([
+    { sql: "UPDATE ClassTeacherAssignment SET status = 'INACTIVE', endDate = ?, updatedAt = ? WHERE schoolId = ? AND classId = ? AND academicYear = ? AND status = 'ACTIVE'", params: [now.slice(0, 10), now, schoolId, classId, academicYear] },
+    { sql: 'INSERT INTO ClassTeacherAssignment (id, schoolId, classId, teacherId, academicYear, startDate, endDate, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', params: [id, schoolId, classId, teacherId, academicYear, startDate, null, 'ACTIVE', now, now] },
+    { sql: 'UPDATE Class SET classTeacherId = ?, updatedAt = ? WHERE id = ? AND schoolId = ?', params: [teacherId, now, classId, schoolId] },
+  ])
+
+  const assignment = (await listLocalClassTeacherAssignments({ schoolId, classId, academicYear })).assignments.find((item: Record<string, unknown>) => item.id === id)
+  return { message: 'Class teacher assigned successfully', assignment }
+}
+
+async function updateLocalClassTeacherAssignment(params: Record<string, unknown>) {
+  const currentUser = useAppStore.getState().currentUser
+  const assignmentId = String(params.assignmentId || '')
+  if (!assignmentId || currentUser?.role !== 'SCHOOL_ADMIN' || !currentUser?.schoolId) throw new Error('School administrator access required')
+  const [assignment] = await ConnectionManager.query<{ id: string; schoolId: string; classId: string; academicYear: string }>(
+    'SELECT id, schoolId, classId, academicYear FROM ClassTeacherAssignment WHERE id = ? LIMIT 1',
+    [assignmentId],
+  )
+  if (!assignment || assignment.schoolId !== currentUser.schoolId) throw new Error('Assignment not found')
+
+  const now = new Date().toISOString()
+  const updates: string[] = []
+  const values: unknown[] = []
+  if (params.teacherId !== undefined) {
+    const [teacher] = await ConnectionManager.query<{ schoolId: string }>('SELECT schoolId FROM Teacher WHERE id = ? LIMIT 1', [String(params.teacherId)])
+    if (!teacher || teacher.schoolId !== currentUser.schoolId) throw new Error('Teacher not found or does not belong to school')
+    updates.push('teacherId = ?')
+    values.push(String(params.teacherId))
+  }
+  if (params.status !== undefined) {
+    updates.push('status = ?')
+    values.push(String(params.status))
+  }
+  if (params.endDate !== undefined) {
+    updates.push('endDate = ?')
+    values.push(params.endDate ? String(params.endDate) : null)
+  }
+  if (!updates.length) throw new Error('No assignment changes provided')
+  updates.push('updatedAt = ?')
+  values.push(now, assignmentId)
+
+  const queries: Array<{ sql: string; params?: unknown[] }> = []
+  if (params.status === 'ACTIVE') {
+    queries.push({ sql: "UPDATE ClassTeacherAssignment SET status = 'INACTIVE', endDate = ?, updatedAt = ? WHERE schoolId = ? AND classId = ? AND academicYear = ? AND status = 'ACTIVE' AND id <> ?", params: [now.slice(0, 10), now, assignment.schoolId, assignment.classId, assignment.academicYear, assignmentId] })
+  }
+  queries.push({ sql: `UPDATE ClassTeacherAssignment SET ${updates.join(', ')} WHERE id = ?`, params: values })
+  if (params.teacherId !== undefined || params.status === 'ACTIVE') {
+    queries.push({ sql: "UPDATE Class SET classTeacherId = (SELECT teacherId FROM ClassTeacherAssignment WHERE classId = ? AND schoolId = ? AND status = 'ACTIVE' ORDER BY updatedAt DESC LIMIT 1), updatedAt = ? WHERE id = ? AND schoolId = ?", params: [assignment.classId, assignment.schoolId, now, assignment.classId, assignment.schoolId] })
+  }
+  await ConnectionManager.transaction(queries)
+  const [updated] = (await listLocalClassTeacherAssignments({ schoolId: assignment.schoolId, classId: assignment.classId, academicYear: assignment.academicYear, includeHistory: 'true' })).assignments.filter((item: Record<string, unknown>) => item.id === assignmentId)
+  return { message: 'Assignment updated successfully', assignment: updated }
+}
+
+async function removeLocalClassTeacherAssignment(params: Record<string, unknown>) {
+  const currentUser = useAppStore.getState().currentUser
+  const assignmentId = String(params.assignmentId || '')
+  if (!assignmentId || currentUser?.role !== 'SCHOOL_ADMIN' || !currentUser?.schoolId) throw new Error('School administrator access required')
+  const [assignment] = await ConnectionManager.query<{ id: string; schoolId: string; classId: string }>(
+    'SELECT id, schoolId, classId FROM ClassTeacherAssignment WHERE id = ? LIMIT 1',
+    [assignmentId],
+  )
+  if (!assignment || assignment.schoolId !== currentUser.schoolId) throw new Error('Assignment not found')
+
+  const now = new Date().toISOString()
+  await ConnectionManager.transaction([
+    { sql: "UPDATE ClassTeacherAssignment SET status = 'INACTIVE', endDate = ?, updatedAt = ? WHERE id = ?", params: [now.slice(0, 10), now, assignmentId] },
+    { sql: "UPDATE Class SET classTeacherId = (SELECT teacherId FROM ClassTeacherAssignment WHERE classId = ? AND schoolId = ? AND status = 'ACTIVE' ORDER BY updatedAt DESC LIMIT 1), updatedAt = ? WHERE id = ? AND schoolId = ?", params: [assignment.classId, assignment.schoolId, now, assignment.classId, assignment.schoolId] },
+  ])
+  const [updated] = (await listLocalClassTeacherAssignments({ schoolId: assignment.schoolId, classId: assignment.classId, includeHistory: 'true' })).assignments.filter((item: Record<string, unknown>) => item.id === assignmentId)
+  return { message: 'Assignment removed successfully', assignment: updated }
+}
 
 // Map endpoints to API services for mobile mode
 const endpointMap: Record<string, (params: Record<string, unknown>, method?: string) => Promise<unknown>> = {
@@ -218,7 +387,11 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     const teacherId = String(params.teacherId || '')
     const schoolId = String(params.schoolId || '')
     const classTeacherRows = await ConnectionManager.query<Record<string, unknown>>(
-      'SELECT id, name, fullName, classTeacherId FROM Class WHERE schoolId = ? AND classTeacherId = ? ORDER BY name ASC',
+      `SELECT c.id, c.name, c.fullName, a.teacherId AS classTeacherId
+       FROM ClassTeacherAssignment a
+       JOIN Class c ON c.id = a.classId
+       WHERE a.schoolId = ? AND a.teacherId = ? AND a.status = 'ACTIVE'
+       ORDER BY c.name ASC`,
       [schoolId, teacherId],
     )
     const subjectRows = await ConnectionManager.query<Record<string, unknown>>(
@@ -254,7 +427,7 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     const teacherId = String(params.teacherId || '')
     const schoolId = String(params.schoolId || '')
     const classRows = await ConnectionManager.query<{ id: string }>(
-      `SELECT id FROM Class WHERE schoolId = ? AND classTeacherId = ?
+      `SELECT a.classId AS id FROM ClassTeacherAssignment a JOIN Class c ON c.id = a.classId WHERE a.schoolId = ? AND a.teacherId = ? AND a.status = 'ACTIVE'
        UNION SELECT ts.classId AS id FROM TeacherSubject ts JOIN Class c ON c.id = ts.classId WHERE ts.teacherId = ? AND c.schoolId = ?`,
       [schoolId, teacherId, teacherId, schoolId],
     )
@@ -280,8 +453,33 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     if (method === 'POST') return SchoolApi.create(params as unknown as Parameters<typeof SchoolApi.create>[0])
     if (method === 'PUT') return SchoolApi.update(params as unknown as Parameters<typeof SchoolApi.update>[0])
     if (method === 'DELETE') return SchoolApi.delete(params.id as string)
+    if ((params.includeClasses || params.includeTeachers) && params.schoolId) {
+      const schoolRows = await ConnectionManager.query<Record<string, unknown>>('SELECT * FROM School WHERE id = ? LIMIT 1', [String(params.schoolId)])
+      const school = schoolRows[0]
+      if (!school) return { school: null, schools: [] }
+      const [classes, teachers] = await Promise.all([
+        params.includeClasses ? ConnectionManager.query<Record<string, unknown>>('SELECT * FROM Class WHERE schoolId = ? ORDER BY name ASC', [String(params.schoolId)]) : Promise.resolve([]),
+        params.includeTeachers ? ConnectionManager.query<Record<string, unknown>>('SELECT * FROM Teacher WHERE schoolId = ? ORDER BY name ASC', [String(params.schoolId)]) : Promise.resolve([]),
+      ])
+      return { school: { ...school, classes, teachers }, schools: [{ ...school, classes, teachers }] }
+    }
     if (params.id) return SchoolApi.getById(params.id as string)
     return SchoolApi.list()
+  },
+  '/api/shulea/class-teacher-assignments': async (params, method) => {
+    if (method === 'POST') {
+      if (params.action === 'assign') return assignLocalClassTeacher(params)
+      if (params.action === 'update') return updateLocalClassTeacherAssignment(params)
+      if (params.action === 'remove') return removeLocalClassTeacherAssignment(params)
+      if (params.action === 'get-by-teacher') {
+        const teacherId = String(params.teacherId || '')
+        const schoolId = useAppStore.getState().currentUser?.schoolId || ''
+        const rows = await listLocalClassTeacherAssignments({ schoolId, includeHistory: 'false', academicYear: params.academicYear })
+        const assignments = rows.assignments.filter((item: Record<string, unknown>) => item.teacherId === teacherId)
+        return { assignments, total: assignments.length }
+      }
+    }
+    return listLocalClassTeacherAssignments(params)
   },
   // Subjects
   '/api/shulea/subjects': (params, method) => {
@@ -584,6 +782,7 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
         endpoint,
         method,
         body: localOptions.body,
+        baseVersion: await getMutationBaseVersion(endpoint, localOptions.body),
         userId: currentUser.id,
         schoolId: currentUser.schoolId,
       })
@@ -599,7 +798,7 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
   if (isBrowser && !isOfflineBrowser && endpoint.startsWith('/api/')) {
     ConnectionManager.setMode('prisma')
     if (currentUser?.id && currentUser.schoolId) {
-      await flushOfflineMutations({ userId: currentUser.id, schoolId: currentUser.schoolId })
+      await runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId })
     }
   }
   
@@ -620,6 +819,7 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
           endpoint,
           method,
           body: localOptions.body,
+          baseVersion: await getMutationBaseVersion(endpoint, localOptions.body),
           userId: currentUser.id,
           schoolId: currentUser.schoolId,
         })
@@ -630,7 +830,51 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
   }
 }
 
+async function getMutationBaseVersion(endpoint: string, body: string): Promise<number | undefined> {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    if (typeof parsed.baseVersion === 'number' && Number.isInteger(parsed.baseVersion) && parsed.baseVersion >= 0) return parsed.baseVersion
+    const path = endpoint.split('?')[0]
+    const entityMap: Record<string, string> = {
+      '/api/shulea/students': 'STUDENT',
+      '/api/shulea/classes': 'CLASS',
+      '/api/shulea/subjects': 'SUBJECT',
+      '/api/shulea/teachers': 'TEACHER',
+      '/api/shulea/class-teacher-assignments': 'CLASS_TEACHER_ASSIGNMENT',
+      '/api/shulea/exams': 'EXAM',
+      '/api/shulea/marks': 'MARK',
+      '/api/shulea/results': 'RESULT',
+      '/api/shulea/attendance': 'ATTENDANCE',
+      '/api/shulea/tabia': 'TABIA',
+      '/api/shulea/grading': 'GRADING_CONFIG',
+    }
+    const entityType = entityMap[path]
+    const entityId = parsed.assignmentId || parsed.id || parsed.studentId || parsed.teacherId || parsed.classId || parsed.subjectId || parsed.examId
+    if (!entityType || typeof entityId !== 'string') return undefined
+    const key = `sync-version-${entityType}:${entityId}`
+    const rows = await ConnectionManager.query<{ value: string }>('SELECT value FROM AppSetting WHERE key = ? LIMIT 1', [key])
+    const version = Number(rows[0]?.value)
+    return Number.isInteger(version) && version >= 0 ? version : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function prepareOfflineOptions(endpoint: string, options?: RequestInit): Promise<RequestInit | undefined> {
+  if (typeof options?.body === 'string') {
+    const path = new URL(endpoint, 'http://localhost').pathname
+    if (path === '/api/shulea/class-teacher-assignments' && (options.method || 'GET').toUpperCase() === 'POST') {
+      try {
+        const body = JSON.parse(options.body) as Record<string, unknown>
+        if (body.action === 'assign' && !body.id) {
+          return { ...options, body: JSON.stringify({ ...body, id: newLocalId() }) }
+        }
+      } catch {
+        return options
+      }
+    }
+    return options
+  }
   if (!(options?.body instanceof FormData) || endpoint !== '/api/shulea/students') return options
   const file = options.body.get('file')
   const classId = String(options.body.get('classId') || '')

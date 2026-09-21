@@ -469,7 +469,7 @@ model ClassTeacherAssignment {
   class   Class   @relation("ClassTeacherAssignments", fields: [classId], references: [id], onDelete: Cascade)
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
-  @@unique([schoolId, classId, academicYear, status])
+  @@index([schoolId, classId, academicYear, status])
   @@index([schoolId])
   @@index([classId])
   @@index([teacherId])

@@ -1,4 +1,5 @@
 import { ConnectionManager } from '@/services/database/ConnectionManager'
+import { getActiveDataScope } from '@/lib/store'
 import { validateRequired, validateLength, validateEnum, generateId } from '@/modules/validation'
 import type { Student, StudentWithClass } from '@/types'
 
@@ -257,6 +258,8 @@ export class StudentRepository {
 
   private static async getByIdSQLite(id: string): Promise<StudentWithClass | null> {
     const conn = ConnectionManager
+    const schoolId = getActiveDataScope().schoolId
+    if (!schoolId) return null
     const rows = await conn.query<Record<string, unknown>>(`
       SELECT s.*, 
         c.name as class_name, 
@@ -266,8 +269,8 @@ export class StudentRepository {
       FROM Student s
       LEFT JOIN Class c ON s.classId = c.id
       LEFT JOIN School sch ON s.schoolId = sch.id
-      WHERE s.id = ?
-    `, [id])
+      WHERE s.id = ? AND s.schoolId = ?
+    `, [id, schoolId])
 
     if (rows.length === 0) return null
     return this.mapRowToStudentWithClass(rows[0])

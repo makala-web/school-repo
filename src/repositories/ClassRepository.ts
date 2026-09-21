@@ -1,4 +1,5 @@
 import { ConnectionManager } from '@/services/database/ConnectionManager'
+import { getActiveDataScope } from '@/lib/store'
 import { validateRequired, validateLength, generateId } from '@/modules/validation'
 import type { Class, SchoolType, Student } from '@/types'
 
@@ -136,6 +137,8 @@ export class ClassRepository {
 
   private static async getByIdSQLite(id: string): Promise<ClassWithDetails | null> {
     const conn = ConnectionManager
+    const schoolId = getActiveDataScope().schoolId
+    if (!schoolId) return null
     const rows = await conn.query<Record<string, unknown>>(`
       SELECT c.*, 
         t.id as teacher_id, 
@@ -145,9 +148,9 @@ export class ClassRepository {
       FROM Class c
       LEFT JOIN Teacher t ON c.classTeacherId = t.id
       LEFT JOIN Student s ON s.classId = c.id AND s.status = 'ACTIVE'
-      WHERE c.id = ?
+      WHERE c.id = ? AND c.schoolId = ?
       GROUP BY c.id
-    `, [id])
+    `, [id, schoolId])
 
     if (rows.length === 0) return null
     return this.mapRowToClassWithDetails(rows[0])
@@ -332,6 +335,7 @@ export class ClassRepository {
       { sql: 'DELETE FROM Tabia WHERE classId = ?', params: [id] },
       { sql: 'DELETE FROM Exam WHERE classId = ?', params: [id] },
       { sql: 'DELETE FROM TeacherSubject WHERE classId = ?', params: [id] },
+      { sql: 'DELETE FROM ClassTeacherAssignment WHERE classId = ?', params: [id] },
       { sql: 'DELETE FROM ClassSubject WHERE classId = ?', params: [id] },
       { sql: 'DELETE FROM Student WHERE classId = ?', params: [id] },
       { sql: 'DELETE FROM Class WHERE id = ?', params: [id] },

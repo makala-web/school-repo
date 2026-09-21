@@ -108,13 +108,14 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleAssignClassTeacher(data: {
+  id?: string;
   schoolId: string;
   classId: string;
   teacherId: string;
   academicYear: string;
   startDate: string;
 }, actor: any) {
-  const { schoolId, classId, teacherId, academicYear, startDate } = data;
+  const { id, schoolId, classId, teacherId, academicYear, startDate } = data;
 
   // Validate school access
   if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== schoolId) {
@@ -177,6 +178,7 @@ async function handleAssignClassTeacher(data: {
   // Create new assignment
   const assignment = await db.classTeacherAssignment.create({
     data: {
+      ...(id ? { id } : {}),
       schoolId,
       classId,
       teacherId,

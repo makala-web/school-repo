@@ -58,7 +58,7 @@ export class SchemaManager {
       
       const tables = [
         'BackupLog', 'GradingConfig', 'StudentResult', 'Tabia', 'Attendance',
-        'MarksEntry', 'Exam', 'TeacherSubject', 'ClassSubject', 'Subject',
+        'MarksEntry', 'Exam', 'TeacherSubject', 'ClassTeacherAssignment', 'ClassSubject', 'Subject',
         'Student', 'Class', 'Teacher', 'User', 'School', 'AppSetting'
       ]
 
@@ -84,7 +84,7 @@ export class SchemaManager {
   }> {
     const tables = [
       'School', 'User', 'Teacher', 'Class', 'Student', 'Subject',
-      'ClassSubject', 'TeacherSubject', 'Exam', 'MarksEntry',
+      'ClassSubject', 'ClassTeacherAssignment', 'TeacherSubject', 'Exam', 'MarksEntry',
       'Attendance', 'Tabia', 'StudentResult', 'GradingConfig'
     ]
 

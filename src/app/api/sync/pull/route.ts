@@ -23,10 +23,11 @@ export async function GET(request: NextRequest) {
   const limitValue = Number(request.nextUrl.searchParams.get('limit') || '100')
   if (!Number.isInteger(cursorValue) || cursorValue < 0) return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 })
   const limit = Math.min(Math.max(Number.isInteger(limitValue) ? limitValue : 100, 1), 250)
+  const resync = request.nextUrl.searchParams.get('resync') === '1'
 
   const authorizedClasses = actor.role === 'TEACHER' ? new Set(await getAuthorizedClassIds(actor, { allowSubjectAssignment: true })) : null
   const changes = await db.syncChange.findMany({
-    where: { schoolId: actor.schoolId, sequence: { gt: cursorValue } },
+    where: { schoolId: actor.schoolId, ...(resync ? {} : { sequence: { gt: cursorValue } }) },
     orderBy: { sequence: 'asc' },
     take: limit,
   })
@@ -53,5 +54,6 @@ export async function GET(request: NextRequest) {
     cursor: cursorValue,
     nextCursor,
     hasMore: changes.length === limit,
+    authorizedClassIds: authorizedClasses ? [...authorizedClasses] : null,
   })
 }

@@ -1,4 +1,5 @@
 import { ConnectionManager } from '@/services/database/ConnectionManager'
+import { getActiveDataScope } from '@/lib/store'
 import type { MarksEntry, MarksEntryWithRelations, StudentResult, Student, Subject } from '@/types'
 
 export interface CreateMarksInput {
@@ -132,6 +133,8 @@ export class MarksRepository {
 
   private static async getByIdSQLite(id: string): Promise<MarksEntryWithRelations | null> {
     const conn = ConnectionManager
+    const schoolId = getActiveDataScope().schoolId
+    if (!schoolId) return null
     const rows = await conn.query<Record<string, unknown>>(`
       SELECT m.*,
         s.id as s_id, s.fullName as s_fullName, s.gender as s_gender, s.admissionNo as s_admissionNo,
@@ -143,8 +146,8 @@ export class MarksRepository {
       JOIN ClassSubject cs ON m.classSubjectId = cs.id
       JOIN Subject sub ON cs.subjectId = sub.id
       JOIN Exam e ON m.examId = e.id
-      WHERE m.id = ?
-    `, [id])
+      WHERE m.id = ? AND s.schoolId = ? AND e.schoolId = ?
+    `, [id, schoolId, schoolId])
 
     if (rows.length === 0) return null
     return this.mapRowToMarksWithRelations(rows[0])

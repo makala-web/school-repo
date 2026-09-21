@@ -1,4 +1,5 @@
 import { ConnectionManager } from '@/services/database/ConnectionManager'
+import { getActiveDataScope } from '@/lib/store'
 import type { StudentResult, StudentResultWithRelations } from '@/types'
 
 export interface CreateResultInput {
@@ -124,7 +125,9 @@ export class ResultsRepository {
 
   private static async getByIdSQLite(id: string): Promise<StudentResult | null> {
     const conn = ConnectionManager
-    const rows = await conn.query<StudentResult>('SELECT * FROM StudentResult WHERE id = ?', [id])
+    const schoolId = getActiveDataScope().schoolId
+    if (!schoolId) return null
+    const rows = await conn.query<StudentResult>('SELECT sr.* FROM StudentResult sr JOIN Class c ON c.id = sr.classId WHERE sr.id = ? AND c.schoolId = ?', [id, schoolId])
     return rows[0] || null
   }
 
@@ -151,6 +154,8 @@ export class ResultsRepository {
 
   private static async getByIdWithRelationsSQLite(id: string): Promise<StudentResultWithRelations | null> {
     const conn = ConnectionManager
+    const schoolId = getActiveDataScope().schoolId
+    if (!schoolId) return null
     const rows = await conn.query<Record<string, unknown>>(`
       SELECT sr.*,
         s.id as s_id, s.fullName as s_fullName, s.admissionNo as s_admissionNo, s.gender as s_gender,
@@ -160,8 +165,8 @@ export class ResultsRepository {
       JOIN Student s ON sr.studentId = s.id
       JOIN Exam e ON sr.examId = e.id
       JOIN Class c ON sr.classId = c.id
-      WHERE sr.id = ?
-    `, [id])
+      WHERE sr.id = ? AND c.schoolId = ?
+    `, [id, schoolId])
 
     if (rows.length === 0) return null
     return this.mapRowToResultWithRelations(rows[0])

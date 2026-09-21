@@ -162,6 +162,24 @@ export const TABLES = {
     )
   `,
 
+  ClassTeacherAssignment: `
+    CREATE TABLE IF NOT EXISTS ClassTeacherAssignment (
+      id TEXT PRIMARY KEY,
+      schoolId TEXT NOT NULL,
+      classId TEXT NOT NULL,
+      teacherId TEXT NOT NULL,
+      academicYear TEXT NOT NULL,
+      startDate TEXT NOT NULL,
+      endDate TEXT,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      FOREIGN KEY (schoolId) REFERENCES School(id) ON DELETE CASCADE,
+      FOREIGN KEY (classId) REFERENCES Class(id) ON DELETE CASCADE,
+      FOREIGN KEY (teacherId) REFERENCES Teacher(id) ON DELETE CASCADE
+    )
+  `,
+
   Student: `
     CREATE TABLE IF NOT EXISTS Student (
       id TEXT PRIMARY KEY,
@@ -382,6 +400,11 @@ export const INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_student_name ON Student(fullName)',
   'CREATE INDEX IF NOT EXISTS idx_class_school ON Class(schoolId)',
   'CREATE INDEX IF NOT EXISTS idx_class_teacher ON Class(classTeacherId)',
+  'CREATE INDEX IF NOT EXISTS idx_class_teacher_assignment_school ON ClassTeacherAssignment(schoolId)',
+  'CREATE INDEX IF NOT EXISTS idx_class_teacher_assignment_class ON ClassTeacherAssignment(classId)',
+  'CREATE INDEX IF NOT EXISTS idx_class_teacher_assignment_teacher ON ClassTeacherAssignment(teacherId)',
+  'CREATE INDEX IF NOT EXISTS idx_class_teacher_assignment_status ON ClassTeacherAssignment(status)',
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_class_teacher_assignment_one_active ON ClassTeacherAssignment(schoolId, classId, academicYear) WHERE status = 'ACTIVE'",
   'CREATE INDEX IF NOT EXISTS idx_subject_school ON Subject(schoolId)',
   'CREATE INDEX IF NOT EXISTS idx_teacher_school ON Teacher(schoolId)',
   'CREATE INDEX IF NOT EXISTS idx_exam_class ON Exam(classId)',

@@ -3,10 +3,12 @@ import { db } from '@/lib/db'
 import { getAuthenticatedUser } from '@/lib/server-auth'
 
 export const dynamic = 'force-dynamic'
+const LEDGER_RETRY_ERROR = 'Cloud ledger transaction failed; upstream mutation already returned successfully'
 
 const SYNCABLE_ENDPOINTS = new Set([
   '/api/shulea/students',
   '/api/shulea/teachers',
+  '/api/shulea/class-teacher-assignments',
   '/api/shulea/classes',
   '/api/shulea/subjects',
   '/api/shulea/attendance',
@@ -38,6 +40,14 @@ function getEntity(endpoint: string, method: string, body: Record<string, unknow
     '/api/shulea/grading': 'GRADING_CONFIG',
   }
   if (path === '/api/shulea/subjects' && body.action === 'assign-to-class') return { entityType: 'CLASS_SUBJECT', entityId: typeof body.classId === 'string' ? body.classId : null, operationType: `${method} ${path}` }
+  if (path === '/api/shulea/class-teacher-assignments') {
+    const entityId = typeof body.assignmentId === 'string'
+      ? body.assignmentId
+      : typeof body.id === 'string'
+        ? body.id
+        : null
+    return { entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId, operationType: `${method} ${path}` }
+  }
   if (path === '/api/shulea/teachers' && ['assign-subject', 'remove-assignment', 'update-assignment'].includes(String(body.action))) {
     return { entityType: 'TEACHER_SUBJECT', entityId: typeof body.assignmentId === 'string' ? body.assignmentId : null, operationType: `${method} ${path}` }
   }
@@ -124,6 +134,24 @@ async function resolveTargets(
     return rows.map(row => ({ entityType: 'TEACHER_SUBJECT', entityId: row.id, payload: JSON.stringify(row) }))
   }
 
+  if (path === '/api/shulea/class-teacher-assignments') {
+    const rows = await db.classTeacherAssignment.findMany({
+      where: {
+        schoolId,
+        ...(typeof body.assignmentId === 'string' ? { id: body.assignmentId } : {}),
+        ...(typeof body.id === 'string' ? { id: body.id } : {}),
+        ...(typeof body.classId === 'string' ? { classId: body.classId } : {}),
+        ...(typeof body.teacherId === 'string' ? { teacherId: body.teacherId } : {}),
+      },
+    })
+    const classIds = [...new Set(rows.map(row => row.classId))]
+    const classes = classIds.length ? await db.class.findMany({ where: { id: { in: classIds }, schoolId } }) : []
+    return [
+      ...rows.map(row => ({ entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId: row.id, payload: JSON.stringify(row) })),
+      ...classes.map(row => ({ entityType: 'CLASS', entityId: row.id, payload: JSON.stringify(row) })),
+    ]
+  }
+
   if (path === '/api/shulea/grading' && method !== 'DELETE') {
     const rows = await db.gradingConfig.findMany({ where: { schoolId } })
     return rows.map(row => ({ entityType: 'GRADING_CONFIG', entityId: row.id, payload: JSON.stringify(row) }))
@@ -172,6 +200,7 @@ export async function POST(request: NextRequest) {
   const existing = await db.syncOperation.findUnique({
     where: { schoolId_operationId: { schoolId: actor.schoolId, operationId } },
   })
+  let replayLedgerOnly = false
   if (existing?.status === 'PROCESSED') {
     return new NextResponse(existing.response || JSON.stringify({ success: true, replay: true }), {
       status: 200,
@@ -188,7 +217,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (existing?.status === 'FAILED') {
-    const claimed = await db.syncOperation.updateMany({ where: { id: existing.id, status: 'FAILED' }, data: { status: 'PROCESSING', error: null, response: null, processedAt: null } })
+    replayLedgerOnly = existing.error === LEDGER_RETRY_ERROR && Boolean(existing.response)
+    const claimed = await db.syncOperation.updateMany({ where: { id: existing.id, status: 'FAILED' }, data: { status: 'PROCESSING', error: null, response: replayLedgerOnly ? existing.response : null, processedAt: null } })
     if (!claimed.count) return NextResponse.json({ error: 'Operation is already being retried', operationId }, { status: 202 })
   }
 
@@ -203,7 +233,8 @@ export async function POST(request: NextRequest) {
     const retry = await db.syncOperation.findUnique({ where: { schoolId_operationId: { schoolId: actor.schoolId, operationId } } })
     if (retry?.status === 'PROCESSED') return new NextResponse(retry.response || JSON.stringify({ success: true, replay: true }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-Shulea-Replay': 'true' } })
     if (retry?.status === 'FAILED') {
-      const claimed = await db.syncOperation.updateMany({ where: { id: retry.id, status: 'FAILED' }, data: { status: 'PROCESSING', error: null, response: null, processedAt: null } })
+      replayLedgerOnly = retry.error === LEDGER_RETRY_ERROR && Boolean(retry.response)
+      const claimed = await db.syncOperation.updateMany({ where: { id: retry.id, status: 'FAILED' }, data: { status: 'PROCESSING', error: null, response: replayLedgerOnly ? retry.response : null, processedAt: null } })
       if (!claimed.count) return NextResponse.json({ error: 'Operation is already being retried', operationId }, { status: 202 })
     } else {
       return NextResponse.json({ error: 'Operation is already being processed', operationId }, { status: 202 })
@@ -231,23 +262,28 @@ export async function POST(request: NextRequest) {
   }
 
   const cookie = request.headers.get('cookie') || ''
-  let upstream: Response
-  try {
-    upstream = await fetch(new URL(endpoint, request.url), {
-      method,
-      headers: { 'Content-Type': 'application/json', cookie, 'X-Shulea-Operation-Id': operationId },
-      body: envelope.body,
-      cache: 'no-store',
-    })
-  } catch {
-    await db.syncOperation.update({ where: { id: (await db.syncOperation.findUniqueOrThrow({ where: { schoolId_operationId: { schoolId: actor.schoolId, operationId } } })).id }, data: { status: 'FAILED', error: 'Upstream mutation unavailable' } })
-    return NextResponse.json({ error: 'Synchronization temporarily unavailable' }, { status: 503 })
-  }
+  let responseText = existing?.response || ''
+  let upstreamStatus = 200
+  if (!replayLedgerOnly) {
+    let upstream: Response
+    try {
+      upstream = await fetch(new URL(endpoint, request.url), {
+        method,
+        headers: { 'Content-Type': 'application/json', cookie, 'X-Shulea-Operation-Id': operationId },
+        body: envelope.body,
+        cache: 'no-store',
+      })
+    } catch {
+      await db.syncOperation.update({ where: { id: (await db.syncOperation.findUniqueOrThrow({ where: { schoolId_operationId: { schoolId: actor.schoolId, operationId } } })).id }, data: { status: 'FAILED', error: 'Upstream mutation unavailable' } })
+      return NextResponse.json({ error: 'Synchronization temporarily unavailable' }, { status: 503 })
+    }
 
-  const responseText = await upstream.text()
-  if (!upstream.ok) {
-    await db.syncOperation.updateMany({ where: { schoolId: actor.schoolId, operationId }, data: { status: 'FAILED', error: errorMessage(responseText), response: responseText.slice(0, 20000) } })
-    return new NextResponse(responseText, { status: upstream.status, headers: { 'Content-Type': 'application/json' } })
+    responseText = await upstream.text()
+    upstreamStatus = upstream.status
+    if (!upstream.ok) {
+      await db.syncOperation.updateMany({ where: { schoolId: actor.schoolId, operationId }, data: { status: 'FAILED', error: errorMessage(responseText), response: responseText.slice(0, 20000) } })
+      return new NextResponse(responseText, { status: upstream.status, headers: { 'Content-Type': 'application/json' } })
+    }
   }
 
   const operation = await db.syncOperation.findUniqueOrThrow({ where: { schoolId_operationId: { schoolId: actor.schoolId, operationId } } })
@@ -269,8 +305,8 @@ export async function POST(request: NextRequest) {
     }
     })
   } catch {
-    await db.syncOperation.updateMany({ where: { schoolId, operationId }, data: { status: 'FAILED', error: 'Cloud ledger transaction failed; the operation is retained for idempotent retry' } })
+    await db.syncOperation.updateMany({ where: { schoolId, operationId }, data: { status: 'FAILED', error: LEDGER_RETRY_ERROR, response: responseText.slice(0, 20000), entityId } })
     return NextResponse.json({ error: 'Synchronization ledger transaction failed; retry is required', operationId }, { status: 503 })
   }
-  return new NextResponse(responseText, { status: upstream.status, headers: { 'Content-Type': 'application/json', 'X-Shulea-Operation-Id': operationId } })
+  return new NextResponse(responseText, { status: upstreamStatus, headers: { 'Content-Type': 'application/json', 'X-Shulea-Operation-Id': operationId } })
 }

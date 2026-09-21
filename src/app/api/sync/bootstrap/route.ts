@@ -38,6 +38,26 @@ export async function GET(request: NextRequest) {
     db.classTeacherAssignment.findMany({ where: { schoolId: actor.schoolId, classId: { in: classIds } } }),
     db.teacherSubject.findMany({ where: { classId: { in: classIds }, teacher: { schoolId: actor.schoolId } } }),
   ])
+  const hydratedEntityIds = [...new Set([
+    ...classIds,
+    ...subjects.map(item => item.id),
+    ...students.map(item => item.id),
+    ...exams.map(item => item.id),
+    ...attendance.map(item => item.id),
+    ...marks.map(item => item.id),
+    ...results.map(item => item.id),
+    ...tabia.map(item => item.id),
+    ...assignments.map(item => item.id),
+    ...teacherSubjects.map(item => item.id),
+  ])]
+  const versions = hydratedEntityIds.length
+    ? await db.syncChange.findMany({
+        where: { schoolId: actor.schoolId, entityId: { in: hydratedEntityIds } },
+        orderBy: { sequence: 'desc' },
+        distinct: ['entityType', 'entityId'],
+        select: { entityType: true, entityId: true, version: true },
+      })
+    : []
 
   return NextResponse.json({
     school,
@@ -53,6 +73,7 @@ export async function GET(request: NextRequest) {
     tabia,
     assignments,
     teacherSubjects,
+    versions,
     cursor: sequence?.nextSequence || 0,
     scope: { role: actor.role, classIds },
   })

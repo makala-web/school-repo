@@ -3,8 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { ConnectionManager } from '@/services/database/ConnectionManager'
 import { SchemaManager } from '@/services/database/SchemaManager'
-import { flushOfflineMutations } from '@/services/database/OfflineSyncQueue'
-import { hydrateAuthorizedDevice, pullAuthorizedChanges } from '@/services/database/CloudSyncHydrator'
+import { ensureAuthorizedLocalScope, hydrateAuthorizedDevice, runAuthorizedSyncCycle } from '@/services/database/CloudSyncHydrator'
 import { useAppStore } from '@/lib/store'
 import { getUserFriendlyError } from '@/lib/user-friendly-errors'
 import { toast } from 'sonner'
@@ -75,18 +74,17 @@ export function MobileProvider({ children }: MobileProviderProps) {
 
     initializeOfflineDatabase()
 
-    const syncWhenOnline = (showError = false) => {
+    const syncWhenOnline = async (showError = false) => {
       const user = useAppStore.getState().currentUser
       if (navigator.onLine && user?.id && user.schoolId) {
-        void pullAuthorizedChanges().catch(error => {
-          if (showError) toast.error(getUserFriendlyError(error, 'Synchronization could not complete.'))
-        })
-        void flushOfflineMutations({ userId: user.id, schoolId: user.schoolId }).catch(error => {
+        try {
+          await runAuthorizedSyncCycle({ userId: user.id, schoolId: user.schoolId })
+        } catch (error) {
           if (showError) toast.error(getUserFriendlyError(error, 'Pending changes could not be synchronized.'))
-        })
+        }
       }
     }
-    const handleOnline = () => syncWhenOnline(true)
+    const handleOnline = () => { void syncWhenOnline(true) }
     window.addEventListener('online', handleOnline)
     const syncTimer = window.setInterval(() => syncWhenOnline(false), 30000)
 
@@ -99,9 +97,12 @@ export function MobileProvider({ children }: MobileProviderProps) {
 
   useEffect(() => {
     if (!currentUser?.id || !currentUser.schoolId || currentUser.isDemoUser) return
-    void hydrateAuthorizedDevice().then(() => pullAuthorizedChanges()).catch(error => {
-      toast.error(getUserFriendlyError(error, 'Your device data could not be synchronized yet.'))
-    })
+    void ensureAuthorizedLocalScope()
+      .then(() => hydrateAuthorizedDevice())
+      .then(() => runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId }))
+      .catch(error => {
+        toast.error(getUserFriendlyError(error, 'Your device data could not be synchronized yet.'))
+      })
   }, [currentUser?.id, currentUser?.schoolId, currentUser?.isDemoUser])
 
   return (
