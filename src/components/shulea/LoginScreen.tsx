@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAppStore, type User as StoreUser } from '@/lib/store'
+import { getStoredOfflineSessions, useAppStore, type User as StoreUser } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import { getDeviceInfo } from '@/lib/access-control'
 import { toast } from 'sonner'
@@ -24,6 +24,8 @@ export default function LoginScreen() {
   const [checkingUsers, setCheckingUsers] = useState(true)
   const [hasUsers, setHasUsers] = useState(true)
   const [loginError, setLoginError] = useState('')
+  const [isOffline, setIsOffline] = useState(false)
+  const [offlineSessions, setOfflineSessions] = useState<StoreUser[]>([])
 
   // Login form
   const [loginEmail, setLoginEmail] = useState('')
@@ -38,6 +40,22 @@ export default function LoginScreen() {
 
   useEffect(() => {
     checkUsers()
+  }, [])
+
+  useEffect(() => {
+    function refreshOfflineState() {
+      const offline = typeof navigator !== 'undefined' && !navigator.onLine
+      setIsOffline(offline)
+      setOfflineSessions(offline ? getStoredOfflineSessions() : [])
+    }
+
+    refreshOfflineState()
+    window.addEventListener('online', refreshOfflineState)
+    window.addEventListener('offline', refreshOfflineState)
+    return () => {
+      window.removeEventListener('online', refreshOfflineState)
+      window.removeEventListener('offline', refreshOfflineState)
+    }
   }, [])
 
   // Safe toast wrapper to prevent undefined errors
@@ -84,6 +102,18 @@ export default function LoginScreen() {
       toast.error('Please enter email and password')
       return
     }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const savedSession = offlineSessions.find(session => session.email.toLowerCase() === loginEmail.trim().toLowerCase())
+      if (savedSession) {
+        login(savedSession)
+        toast.success('Continuing with the previously synchronized offline session.')
+        return
+      }
+      const message = 'Internet is required to sign in. If this account was already opened on this device and you did not log out, use the offline session option below.'
+      setLoginError(message)
+      toast.error(message)
+      return
+    }
     setLoginError('')
     setLoading(true)
     try {
@@ -103,12 +133,21 @@ export default function LoginScreen() {
       // Login and redirect to dashboard - login() will handle schoolType properly
       login(data.user)
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : 'Login failed'
+      const rawMessage = err instanceof Error ? err.message : 'Login failed'
+      const networkLoginFailed = /failed to fetch|network|offline/i.test(rawMessage)
+      const errorMsg = networkLoginFailed
+        ? 'Internet is required to sign in. Previously opened accounts can continue offline only if an offline session is available on this device.'
+        : rawMessage
       setLoginError(errorMsg)
       toast.error(errorMsg)
     } finally {
       setLoading(false)
     }
+  }
+
+  function continueOffline(user: StoreUser) {
+    login(user)
+    toast.success('Continuing with the previously synchronized offline session.')
   }
 
   async function handleAcceptInvitation(e: React.FormEvent) {
@@ -220,6 +259,22 @@ export default function LoginScreen() {
                 {loginError && (
                   <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                     <p className="font-medium">{loginError}</p>
+                  </div>
+                )}
+                {isOffline && offlineSessions.length > 0 && (
+                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-medium">Internet is unavailable. Continue with a previously opened account on this device.</p>
+                    {offlineSessions.map(session => (
+                      <Button
+                        key={session.id}
+                        type="button"
+                        variant="outline"
+                        className="w-full justify-start bg-white"
+                        onClick={() => continueOffline(session)}
+                      >
+                        {session.fullName || session.email}
+                      </Button>
+                    ))}
                   </div>
                 )}
                 <div className="space-y-2">
@@ -340,7 +395,11 @@ export default function LoginScreen() {
                         })
                         login(data.user)
                       } catch (err: unknown) {
-                        toast.error(err instanceof Error ? err.message : 'Demo login failed')
+                        const rawMessage = err instanceof Error ? err.message : 'Demo login failed'
+                        const message = (typeof navigator !== 'undefined' && !navigator.onLine) || /failed to fetch|network|offline/i.test(rawMessage)
+                          ? 'Internet is required to start the demo. If you already opened the demo on this device, use the offline session option on the login screen.'
+                          : rawMessage
+                        toast.error(message)
                       } finally {
                         setLoading(false)
                       }

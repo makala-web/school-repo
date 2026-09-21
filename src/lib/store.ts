@@ -78,6 +78,32 @@ export function setPersistenceKeyForUser(user?: Pick<User, 'id' | 'schoolId'> | 
   return nextKey
 }
 
+export function getStoredOfflineSessions(): User[] {
+  if (typeof window === 'undefined') return []
+
+  const sessions: User[] = []
+  const seen = new Set<string>()
+
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const key = window.localStorage.key(i)
+    if (!key || !key.startsWith(`${STORAGE_PREFIX}:`) || key.includes(':guest:')) continue
+
+    try {
+      const raw = window.localStorage.getItem(key)
+      if (!raw) continue
+      const parsed = JSON.parse(raw) as { state?: Partial<AppState> }
+      const user = parsed.state?.currentUser
+      if (!parsed.state?.isAuthenticated || !user?.id || !user.schoolId || seen.has(user.id)) continue
+      seen.add(user.id)
+      sessions.push(user)
+    } catch {
+      // Ignore malformed legacy storage entries.
+    }
+  }
+
+  return sessions
+}
+
 export type SchoolType = 'PRIMARY' | 'SECONDARY'
 export type AppView = 
   | 'login'
