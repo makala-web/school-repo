@@ -6,6 +6,7 @@ import { SchoolRepository, SubjectRepository, UserRepository } from '@/repositor
 import { validateStrongPassword } from '@/modules/settings'
 import { ApiClient, type ApiResponse } from './ApiClient'
 import type { User } from '@/types'
+import { verifyOfflinePassword } from '@/services/database/OfflineAuth'
 
 // Browser-compatible SHA-256 hashing using Web Crypto API
 // Falls back to simple hash for environments without crypto.subtle support
@@ -38,6 +39,9 @@ async function hashPassword(password: string): Promise<string> {
 }
 
 async function verifyPassword(password: string, hashed: string): Promise<boolean> {
+  if (hashed.startsWith('offline-pbkdf2:v1:')) {
+    return verifyOfflinePassword(password, hashed)
+  }
   const hashedInput = await sha256(password)
   return hashedInput === hashed
 }
@@ -96,6 +100,28 @@ export const AuthApi = {
 
       return ApiClient.success({
         message: 'Login successful',
+        user: sanitizeUser(user)
+      })
+    } catch (error) {
+      return ApiClient.error((error as Error).message)
+    }
+  },
+
+  async demoLogin(data: {
+    schoolType: 'PRIMARY' | 'SECONDARY'
+  }): Promise<ApiResponse<{ message: string; user: Omit<User, 'password' | 'securityAnswer'> }>> {
+    try {
+      const email = data.schoolType === 'SECONDARY' ? 'demo-secondary@shulea.app' : 'demo@shulea.app'
+      const user = await UserRepository.getByEmail(email)
+      if (!user || !user.isDemoUser) {
+        return ApiClient.error('Demo data is not available offline yet. Open this demo once while online to prepare it for offline use.')
+      }
+      if (user.schoolId && (!user.school || !user.school.id)) {
+        const school = await SchoolRepository.getById(user.schoolId)
+        if (school) user.school = school
+      }
+      return ApiClient.success({
+        message: 'Offline demo access granted',
         user: sanitizeUser(user)
       })
     } catch (error) {

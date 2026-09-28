@@ -96,14 +96,14 @@ export function MobileProvider({ children }: MobileProviderProps) {
   }, [])
 
   useEffect(() => {
-    if (!currentUser?.id || !currentUser.schoolId || currentUser.isDemoUser) return
+    if (!currentUser?.id || !currentUser.schoolId) return
     void ensureAuthorizedLocalScope()
       .then(() => hydrateAuthorizedDevice())
       .then(() => runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId }))
       .catch(error => {
         toast.error(getUserFriendlyError(error, 'Your device data could not be synchronized yet.'))
       })
-  }, [currentUser?.id, currentUser?.schoolId, currentUser?.isDemoUser])
+  }, [currentUser?.id, currentUser?.schoolId])
 
   return (
     <MobileContext.Provider value={state}>

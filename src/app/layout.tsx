@@ -73,12 +73,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     console.warn('Service Worker registration unavailable:', err);
                   });
                 });
-
-                navigator.serviceWorker.addEventListener('controllerchange', function() {
-                  if (sessionStorage.getItem('shulea-sw-refreshing') === '1') return;
-                  sessionStorage.setItem('shulea-sw-refreshing', '1');
-                  window.location.reload();
-                });
               }
             `,
           }}

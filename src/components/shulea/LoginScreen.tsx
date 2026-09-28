@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { getStoredOfflineSessions, useAppStore, type User as StoreUser } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import { getDeviceInfo } from '@/lib/access-control'
+import { provisionOfflineDemo, provisionOfflineLogin } from '@/services/database/OfflineAuth'
 import { toast } from 'sonner'
 import { GraduationCap, Eye, EyeOff, Mail, Lock, Loader2, School, ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -102,18 +103,6 @@ export default function LoginScreen() {
       toast.error('Please enter email and password')
       return
     }
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      const savedSession = offlineSessions.find(session => session.email.toLowerCase() === loginEmail.trim().toLowerCase())
-      if (savedSession) {
-        login(savedSession)
-        toast.success('Continuing with the previously synchronized offline session.')
-        return
-      }
-      const message = 'Internet is required to sign in. If this account was already opened on this device and you did not log out, use the offline session option below.'
-      setLoginError(message)
-      toast.error(message)
-      return
-    }
     setLoginError('')
     setLoading(true)
     try {
@@ -130,13 +119,23 @@ export default function LoginScreen() {
         }),
       })
 
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        await provisionOfflineLogin(data.user, loginPassword)
+      }
+
       // Login and redirect to dashboard - login() will handle schoolType properly
       login(data.user)
     } catch (err: unknown) {
       const rawMessage = err instanceof Error ? err.message : 'Login failed'
-      const networkLoginFailed = /failed to fetch|network|offline/i.test(rawMessage)
+      const savedSession = offlineSessions.find(session => session.email.toLowerCase() === loginEmail.trim().toLowerCase())
+      if (typeof navigator !== 'undefined' && !navigator.onLine && savedSession && /not available|not initialized|offline database|network|failed to fetch/i.test(rawMessage)) {
+        login(savedSession)
+        toast.success('Continuing with the previously synchronized offline session.')
+        return
+      }
+      const networkLoginFailed = /failed to fetch|network/i.test(rawMessage)
       const errorMsg = networkLoginFailed
-        ? 'Internet is required to sign in. Previously opened accounts can continue offline only if an offline session is available on this device.'
+        ? 'The server is unavailable. If this account has completed offline setup on this device, turn off the network and try offline login again.'
         : rawMessage
       setLoginError(errorMsg)
       toast.error(errorMsg)
@@ -393,6 +392,9 @@ export default function LoginScreen() {
                           method: 'POST',
                           body: JSON.stringify({ action: 'demo-login', schoolType: demoType }),
                         })
+                        if (typeof navigator === 'undefined' || navigator.onLine) {
+                          await provisionOfflineDemo(data.user)
+                        }
                         login(data.user)
                       } catch (err: unknown) {
                         const rawMessage = err instanceof Error ? err.message : 'Demo login failed'

@@ -67,6 +67,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "**/*.tsbuildinfo",
     "examples/**",
     "skills/**",
+    ".tmp-chrome-e2e*/**",
     "**/*.bak",
   ]
 }];

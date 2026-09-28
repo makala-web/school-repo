@@ -334,9 +334,12 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
             newPassword: params.newPassword as string
           })
         case 'demo-login':
+          return AuthApi.demoLogin({
+            schoolType: params.schoolType === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY',
+          })
         case 'register-with-invitation':
-          // These flows require the server session and must not be handled by the
-          // offline repository adapter.
+          // Invitation activation requires the server session and must not be
+          // handled by the offline repository adapter.
           return apiCallWeb('/api/shulea/auth', {
             method: 'POST',
             body: JSON.stringify(params),

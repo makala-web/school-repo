@@ -109,6 +109,10 @@ export class UserRepository {
         s.headTeacherName as school_headTeacherName,
         s.registrationNo as school_registrationNo,
         s.phone as school_phone,
+        s.licenseType as school_licenseType,
+        s.licenseStatus as school_licenseStatus,
+        s.expiryDate as school_expiryDate,
+        s.isDemo as school_isDemo,
         t.name as teacher_name
       FROM User u
       LEFT JOIN School s ON u.schoolId = s.id
@@ -182,6 +186,10 @@ export class UserRepository {
         s.headTeacherName as school_headTeacherName,
         s.registrationNo as school_registrationNo,
         s.phone as school_phone,
+        s.licenseType as school_licenseType,
+        s.licenseStatus as school_licenseStatus,
+        s.expiryDate as school_expiryDate,
+        s.isDemo as school_isDemo,
         t.name as teacher_name
       FROM User u
       LEFT JOIN School s ON u.schoolId = s.id
@@ -234,6 +242,10 @@ export class UserRepository {
         s.headTeacherName as school_headTeacherName,
         s.registrationNo as school_registrationNo,
         s.phone as school_phone,
+        s.licenseType as school_licenseType,
+        s.licenseStatus as school_licenseStatus,
+        s.expiryDate as school_expiryDate,
+        s.isDemo as school_isDemo,
         t.name as teacher_name
       FROM User u
       LEFT JOIN School s ON u.schoolId = s.id
@@ -292,6 +304,10 @@ export class UserRepository {
         s.headTeacherName as school_headTeacherName,
         s.registrationNo as school_registrationNo,
         s.phone as school_phone,
+        s.licenseType as school_licenseType,
+        s.licenseStatus as school_licenseStatus,
+        s.expiryDate as school_expiryDate,
+        s.isDemo as school_isDemo,
         t.name as teacher_name
       FROM User u
       LEFT JOIN School s ON u.schoolId = s.id
@@ -350,6 +366,10 @@ export class UserRepository {
         s.headTeacherName as school_headTeacherName,
         s.registrationNo as school_registrationNo,
         s.phone as school_phone,
+        s.licenseType as school_licenseType,
+        s.licenseStatus as school_licenseStatus,
+        s.expiryDate as school_expiryDate,
+        s.isDemo as school_isDemo,
         t.name as teacher_name
       FROM User u
       LEFT JOIN School s ON u.schoolId = s.id
@@ -563,6 +583,9 @@ export class UserRepository {
       schoolType: row.schoolType as 'PRIMARY' | 'SECONDARY' | null,
       securityQuestion: row.securityQuestion as string | null,
       securityAnswer: row.securityAnswer as string | null,
+      isDemoUser: Boolean(row.isDemoUser),
+      deviceId: row.deviceId as string | null,
+      lastSchoolAccessAt: row.lastSchoolAccessAt as string | null,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
       school: row.school_id ? {
@@ -578,6 +601,10 @@ export class UserRepository {
         headTeacherName: row.school_headTeacherName as string | null,
         registrationNo: row.school_registrationNo as string | null,
         phone: row.school_phone as string | null,
+        licenseType: row.school_licenseType as string | null,
+        licenseStatus: row.school_licenseStatus as string | null,
+        expiryDate: row.school_expiryDate as string | null,
+        isDemo: Boolean(row.school_isDemo),
       } : null,
       teacher: row.teacher_name ? { name: row.teacher_name as string } : null
     } as User

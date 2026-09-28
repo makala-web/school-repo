@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shulea-v12';
+const CACHE_NAME = 'shulea-v13';
 const APP_SHELL_URLS = [
   '/',
   '/manifest.json',

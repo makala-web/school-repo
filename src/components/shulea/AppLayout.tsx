@@ -322,7 +322,13 @@ export default function AppLayout() {
       const online = navigator.onLine
       setIsOnline(online)
       if (online && currentUser?.id && currentUser.schoolId) {
-        await runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId })
+        try {
+          await runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId })
+        } catch (error) {
+          // The existing local data remains usable. Avoid an unhandled timer
+          // rejection while the next scheduled cycle waits to retry.
+          console.warn('[AppLayout] Background sync failed:', error)
+        }
       }
       if (currentUser?.id && currentUser.schoolId) {
         setSyncStatus(await getOfflineSyncStatus({ userId: currentUser.id, schoolId: currentUser.schoolId }))
@@ -340,10 +346,16 @@ export default function AppLayout() {
   }, [currentUser?.id, currentUser?.schoolId])
 
   async function handleLogout() {
-    try {
-      await fetch('/api/shulea/session', { method: 'POST', body: JSON.stringify({ action: 'logout' }), headers: { 'Content-Type': 'application/json' } })
-    } finally {
-      logout()
+    // A device must always be able to leave its local session, even when the
+    // server is unreachable. Cookie cleanup is best-effort and must not hold
+    // the visible logout action hostage to a network request.
+    logout()
+    if (navigator.onLine) {
+      void fetch('/api/shulea/session', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'logout' }),
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => undefined)
     }
   }
 
