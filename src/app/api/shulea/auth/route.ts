@@ -221,7 +221,27 @@ async function ensureDemoData(demoUserId: string, schoolType: 'PRIMARY' | 'SECON
         await db.studentResult.update({ where: { id: result.id }, data: { rank: rankIndex + 1 } })
       }
     }
-    await db.classTeacherAssignment.upsert({ where: { schoolId_classId_academicYear_status: { schoolId, classId: classRecord.id, academicYear: '2026', status: 'ACTIVE' } }, update: { teacherId: classTeacher.id }, create: { schoolId, classId: classRecord.id, teacherId: classTeacher.id, academicYear: '2026', startDate: '2026-01-01', status: 'ACTIVE' } })
+    const activeClassTeacherAssignment = await db.classTeacherAssignment.findFirst({
+      where: { schoolId, classId: classRecord.id, academicYear: '2026', status: 'ACTIVE' },
+      select: { id: true },
+    })
+    if (activeClassTeacherAssignment) {
+      await db.classTeacherAssignment.update({
+        where: { id: activeClassTeacherAssignment.id },
+        data: { teacherId: classTeacher.id },
+      })
+    } else {
+      await db.classTeacherAssignment.create({
+        data: {
+          schoolId,
+          classId: classRecord.id,
+          teacherId: classTeacher.id,
+          academicYear: '2026',
+          startDate: '2026-01-01',
+          status: 'ACTIVE',
+        },
+      })
+    }
     await db.class.update({ where: { id: classRecord.id }, data: { classTeacherId: classTeacher.id } })
   }
 }
