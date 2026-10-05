@@ -97,8 +97,9 @@ export function MobileProvider({ children }: MobileProviderProps) {
 
   useEffect(() => {
     if (!currentUser?.id || !currentUser.schoolId) return
-    void ensureAuthorizedLocalScope()
-      .then(() => hydrateAuthorizedDevice())
+    const scope = { userId: currentUser.id, schoolId: currentUser.schoolId }
+    void ensureAuthorizedLocalScope(scope)
+      .then(() => hydrateAuthorizedDevice(scope))
       .then(() => runAuthorizedSyncCycle({ userId: currentUser.id, schoolId: currentUser.schoolId }))
       .catch(error => {
         toast.error(getUserFriendlyError(error, 'Your device data could not be synchronized yet.'))

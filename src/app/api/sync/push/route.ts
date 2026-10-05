@@ -122,7 +122,8 @@ async function resolveTargets(
 
   if (path === '/api/shulea/teachers' && ['assign-subject', 'remove-assignment', 'update-assignment'].includes(String(body.action))) {
     if (body.action === 'remove-assignment' && typeof body.assignmentId === 'string') {
-      return [{ entityType: 'TEACHER_SUBJECT', entityId: body.assignmentId, payload: null }]
+      const previous = await db.syncChange.findFirst({ where: { schoolId, entityType: 'TEACHER_SUBJECT', entityId: body.assignmentId, payload: { not: null } }, orderBy: { sequence: 'desc' }, select: { payload: true } })
+      return [{ entityType: 'TEACHER_SUBJECT', entityId: body.assignmentId, payload: previous?.payload || null }]
     }
     const rows = await db.teacherSubject.findMany({
       where: {
@@ -281,7 +282,7 @@ export async function POST(request: NextRequest) {
     responseText = await upstream.text()
     upstreamStatus = upstream.status
     if (!upstream.ok) {
-      await db.syncOperation.updateMany({ where: { schoolId: actor.schoolId, operationId }, data: { status: 'FAILED', error: errorMessage(responseText), response: responseText.slice(0, 20000) } })
+      await db.syncOperation.updateMany({ where: { schoolId: actor.schoolId, operationId }, data: { status: upstream.status === 409 ? 'CONFLICT' : 'FAILED', error: errorMessage(responseText), response: responseText.slice(0, 20000) } })
       return new NextResponse(responseText, { status: upstream.status, headers: { 'Content-Type': 'application/json' } })
     }
   }
@@ -294,6 +295,9 @@ export async function POST(request: NextRequest) {
     await db.$transaction(async (tx) => {
     await tx.syncOperation.update({ where: { id: operation.id }, data: { status: 'PROCESSED', response: responseText.slice(0, 20000), processedAt: new Date(), error: null, entityId } })
     for (const target of targets) {
+      // The marks API writes each mark and its version to the ledger together.
+      // Re-logging here would create a false extra version for queued bulk writes.
+      if (endpoint.split('?')[0] === '/api/shulea/marks' && target.entityType === 'MARK') continue
       const previous = await tx.syncChange.findFirst({ where: { schoolId, entityType: target.entityType, entityId: target.entityId }, orderBy: { sequence: 'desc' }, select: { version: true } })
       const sequence = await tx.syncSequence.upsert({
         where: { schoolId },

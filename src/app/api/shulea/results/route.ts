@@ -42,12 +42,9 @@ async function authorizeResultsRequest(request: NextRequest) {
   if (actor.role === 'TEACHER' && targetClassId) {
     const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
     if (!teacher) return { actor: null, response: NextResponse.json({ error: 'Teacher profile not found' }, { status: 403 }) }
-    const [classAssignment, subjectAssignment] = await Promise.all([
-      db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE' }, select: { id: true } }),
-      db.teacherSubject.findFirst({ where: { teacherId: teacher.id, classId: targetClassId }, select: { id: true } }),
-    ])
-    if (!classAssignment && !subjectAssignment) {
-      return { actor: null, response: NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 }) }
+    const classAssignment = await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE', schoolId: actor.schoolId || '' }, select: { id: true } })
+    if (!classAssignment) {
+      return { actor: null, response: NextResponse.json({ error: 'Only the assigned class teacher can access whole-class results' }, { status: 403 }) }
     }
   }
 
@@ -110,12 +107,9 @@ export async function POST(request: NextRequest) {
     }
     if (actor.role === 'TEACHER' && targetClassId) {
       const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-      const [classAssignment, subjectAssignment] = teacher ? await Promise.all([
-        db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE' }, select: { id: true } }),
-        db.teacherSubject.findFirst({ where: { teacherId: teacher.id, classId: targetClassId }, select: { id: true } }),
-      ]) : [null, null]
-      if (!classAssignment && !subjectAssignment) {
-        return NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 })
+      const classAssignment = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE', schoolId: actor.schoolId || '' }, select: { id: true } }) : null
+      if (!classAssignment) {
+        return NextResponse.json({ error: 'Only the assigned class teacher can update whole-class results' }, { status: 403 })
       }
     }
 

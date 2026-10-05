@@ -74,6 +74,7 @@ export default function TeacherManagement() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
   const [availableClasses, setAvailableClasses] = useState<{ id: string; fullName: string; name: string }[]>([])
   const [availableSubjects, setAvailableSubjects] = useState<{ id: string; name: string; shortName?: string | null }[]>([])
+  const [subjectsByClass, setSubjectsByClass] = useState<Record<string, { id: string; name: string; shortName?: string | null }[]>>({})
   
   // Invite form
   const [inviteForm, setInviteForm] = useState({
@@ -81,8 +82,7 @@ export default function TeacherManagement() {
     fullName: '',
     role: 'TEACHER',
     expiryDays: '7'
-    , assignedClasses: [] as string[]
-    , assignedSubjects: [] as string[]
+    , assignmentsByClass: {} as Record<string, string[]>
   })
   const [inviting, setInviting] = useState(false)
   const [assignmentDialog, setAssignmentDialog] = useState(false)
@@ -114,6 +114,11 @@ export default function TeacherManagement() {
       ])
       setAvailableClasses((classesData.classes || []).map((item: any) => ({ id: item.id, name: item.name, fullName: item.fullName || item.name })))
       setAvailableSubjects((subjectsData.subjects || []).map((item: any) => ({ id: item.id, name: item.name, shortName: item.shortName })))
+      const classSubjects = await Promise.all((classesData.classes || []).map(async (item: any) => {
+        const response = await apiCall(`/api/shulea/subjects?action=class-subjects&classId=${item.id}`)
+        return [item.id, (response.classSubjects || []).map((row: any) => ({ id: row.subjectId, name: row.subject?.name || row.name, shortName: row.subject?.shortName || row.shortName }))] as const
+      }))
+      setSubjectsByClass(Object.fromEntries(classSubjects))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load teachers')
     } finally {
@@ -146,14 +151,14 @@ export default function TeacherManagement() {
           fullName: inviteForm.fullName || undefined,
           role: inviteForm.role,
           expiryDays: parseInt(inviteForm.expiryDays),
-          assignedClasses: inviteForm.assignedClasses,
-          assignedSubjects: inviteForm.assignedSubjects,
+          assignedTeacherSubjects: Object.entries(inviteForm.assignmentsByClass).flatMap(([classId, subjectIds]) => subjectIds.map(subjectId => ({ classId, subjectId }))),
         }),
       })
 
-      toast.success(`Invitation saved. Share code ${data.invitation?.inviteCode || ''} with the teacher.`)
+      const assignmentCount = Object.values(inviteForm.assignmentsByClass).reduce((count, ids) => count + ids.length, 0)
+      toast.success(`Invitation saved with ${assignmentCount} class-subject assignment${assignmentCount === 1 ? '' : 's'}. They activate when the teacher accepts. Share code ${data.invitation?.inviteCode || ''}.`)
       setInviteDialog(false)
-      setInviteForm({ email: '', fullName: '', role: 'TEACHER', expiryDays: '7', assignedClasses: [], assignedSubjects: [] })
+      setInviteForm({ email: '', fullName: '', role: 'TEACHER', expiryDays: '7', assignmentsByClass: {} })
       loadData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create invitation')
@@ -198,15 +203,6 @@ export default function TeacherManagement() {
     }
     setSavingAssignments(true)
     try {
-      await apiCall('/api/shulea/class-teacher-assignments', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'assign', schoolId: currentSchool.id, teacherId: selectedTeacher.id,
-          classId: assignmentClassId, academicYear: new Date().getFullYear().toString(),
-          startDate: new Date().toISOString().slice(0, 10), actorUserId: currentUser.id,
-        }),
-      })
-
       const existing = (selectedTeacher.subjectClasses || []).filter(a => a.classId === assignmentClassId)
       const selected = new Set(assignmentSubjectIds)
       await Promise.all([
@@ -464,7 +460,7 @@ export default function TeacherManagement() {
             <div className="space-y-2">
               <Label>Subjects</Label>
               <div className="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">
-                {availableSubjects.map(item => (
+                {(subjectsByClass[assignmentClassId] || []).map(item => (
                   <label key={item.id} className="flex items-center gap-2 text-sm">
                     <input type="checkbox" checked={assignmentSubjectIds.includes(item.id)} onChange={(event) => setAssignmentSubjectIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} />
                     {item.name}
@@ -525,46 +521,36 @@ export default function TeacherManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label>Assigned Classes</Label>
-              <div className="grid max-h-32 grid-cols-1 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">
-                {availableClasses.map((item) => (
-                  <label key={item.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={inviteForm.assignedClasses.includes(item.id)}
-                      onChange={(event) => setInviteForm({
-                        ...inviteForm,
-                        assignedClasses: event.target.checked
-                          ? [...inviteForm.assignedClasses, item.id]
-                          : inviteForm.assignedClasses.filter(id => id !== item.id),
-                      })}
-                    />
-                    {item.fullName}
-                  </label>
-                ))}
+              <Label>Class and subject assignments</Label>
+              <div className="max-h-72 space-y-3 overflow-y-auto rounded-md border p-3">
+                {availableClasses.map(item => {
+                  const selected = Object.prototype.hasOwnProperty.call(inviteForm.assignmentsByClass, item.id)
+                  const subjects = subjectsByClass[item.id] || []
+                  return <section key={item.id} className="rounded border p-3">
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                      <input type="checkbox" checked={selected} onChange={event => setInviteForm(previous => {
+                        const assignmentsByClass = { ...previous.assignmentsByClass }
+                        if (event.target.checked) assignmentsByClass[item.id] = assignmentsByClass[item.id] || []
+                        else delete assignmentsByClass[item.id]
+                        return { ...previous, assignmentsByClass }
+                      })} />
+                      {item.fullName}
+                    </label>
+                    {selected && <div className="mt-2 grid grid-cols-1 gap-2 pl-6 sm:grid-cols-2">
+                      {subjects.map(subject => <label key={subject.id} className="flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={(inviteForm.assignmentsByClass[item.id] || []).includes(subject.id)} onChange={event => setInviteForm(previous => {
+                          const current = previous.assignmentsByClass[item.id] || []
+                          const next = event.target.checked ? [...current, subject.id] : current.filter(id => id !== subject.id)
+                          return { ...previous, assignmentsByClass: { ...previous.assignmentsByClass, [item.id]: next } }
+                        })} />
+                        {subject.name}
+                      </label>)}
+                      {!subjects.length && <span className="text-xs text-muted-foreground">No subjects have been added to this class.</span>}
+                    </div>}
+                  </section>
+                })}
               </div>
-              <p className="text-xs text-muted-foreground">Teacher will only manage students and reports in these classes.</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Assigned Subjects</Label>
-              <div className="grid max-h-32 grid-cols-1 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">
-                {availableSubjects.map((item) => (
-                  <label key={item.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={inviteForm.assignedSubjects.includes(item.id)}
-                      onChange={(event) => setInviteForm({
-                        ...inviteForm,
-                        assignedSubjects: event.target.checked
-                          ? [...inviteForm.assignedSubjects, item.id]
-                          : inviteForm.assignedSubjects.filter(id => id !== item.id),
-                      })}
-                    />
-                    {item.name}
-                  </label>
-                ))}
-              </div>
+              <p className="text-xs text-muted-foreground">Each subject is linked to its selected class and becomes active as soon as the teacher accepts the invitation.</p>
             </div>
 
             <div className="space-y-2">

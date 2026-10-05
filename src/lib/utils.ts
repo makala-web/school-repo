@@ -407,14 +407,14 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     )
     const classTeacherAssignments = classTeacherRows.map(row => ({
       id: String(row.id), name: String(row.name), fullName: String(row.fullName),
-      role: 'CLASS_TEACHER', subjects: subjectRows.filter(item => item.id === row.id).map(item => String(item.subjectName)),
+      role: 'CLASS_TEACHER', subjects: subjectRows.filter(item => item.id === row.id).map(item => ({ id: String(item.subjectId), name: String(item.subjectName) })),
     }))
     const subjectOnlyAssignments = subjectRows
       .filter(row => !classTeacherRows.some(item => item.id === row.id))
       .reduce<Array<Record<string, unknown>>>((items, row) => {
         const existing = items.find(item => item.id === row.id)
-        if (existing) (existing.subjects as string[]).push(String(row.subjectName))
-        else items.push({ id: String(row.id), name: String(row.name), fullName: String(row.fullName), role: 'SUBJECT_TEACHER', subject: String(row.subjectName), subjects: [String(row.subjectName)] })
+        if (existing) (existing.subjects as Array<{ id: string; name: string }>).push({ id: String(row.subjectId), name: String(row.subjectName) })
+        else items.push({ id: String(row.id), name: String(row.name), fullName: String(row.fullName), role: 'SUBJECT_TEACHER', subjects: [{ id: String(row.subjectId), name: String(row.subjectName) }] })
         return items
       }, [])
     return {
@@ -489,6 +489,27 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     if (params.action === 'class-subjects') {
       return ClassesApi.getSubjects(params.classId as string).then(response => {
         if (!response.success) return response
+        const currentUser = useAppStore.getState().currentUser
+        let assignedIds: Set<string> | null = null
+        if (currentUser?.role === 'TEACHER') {
+          return ConnectionManager.query<{ subjectId: string }>(
+            `SELECT ts.subjectId FROM TeacherSubject ts JOIN Teacher t ON t.id = ts.teacherId WHERE t.userId = ? AND ts.classId = ?`,
+            [currentUser.id, String(params.classId || '')],
+          ).then(rows => {
+            assignedIds = new Set(rows.map(row => row.subjectId))
+            return {
+              success: true,
+              data: {
+                classSubjects: (response.data?.subjects || []).filter(subject => assignedIds?.has(subject.subjectId)).map(subject => ({
+                  id: subject.id,
+                  subjectId: subject.subjectId,
+                  classId: params.classId,
+                  subject: { id: subject.subjectId, name: subject.name, shortName: subject.shortName || null },
+                })),
+              },
+            }
+          })
+        }
         return {
           success: true,
           data: {
@@ -781,10 +802,11 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
     const localOptions = await prepareOfflineOptions(endpoint, options)
     const result = await apiCallMobile(endpoint, localOptions)
     if (isMutation && currentUser?.id && currentUser.schoolId && typeof localOptions?.body === 'string') {
+      const versionedBody = await addMarkVersionsToMutation(endpoint, localOptions.body)
       await enqueueOfflineMutation({
         endpoint,
         method,
-        body: localOptions.body,
+        body: versionedBody,
         baseVersion: await getMutationBaseVersion(endpoint, localOptions.body),
         userId: currentUser.id,
         schoolId: currentUser.schoolId,
@@ -818,10 +840,11 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
       const localOptions = await prepareOfflineOptions(endpoint, options)
       const result = await apiCallMobile(endpoint, localOptions)
       if (isMutation && currentUser?.id && currentUser.schoolId && typeof localOptions?.body === 'string') {
+        const versionedBody = await addMarkVersionsToMutation(endpoint, localOptions.body)
         await enqueueOfflineMutation({
           endpoint,
           method,
-          body: localOptions.body,
+          body: versionedBody,
           baseVersion: await getMutationBaseVersion(endpoint, localOptions.body),
           userId: currentUser.id,
           schoolId: currentUser.schoolId,
@@ -830,6 +853,31 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
       return result
     }
     throw error
+  }
+}
+
+async function addMarkVersionsToMutation(endpoint: string, body: string): Promise<string> {
+  if (endpoint.split('?')[0] !== '/api/shulea/marks') return body
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const isBulk = parsed.action === 'bulk-save' && Array.isArray(parsed.marks)
+    const sourceMarks = isBulk ? parsed.marks as unknown[] : [parsed]
+    const marks = await Promise.all(sourceMarks.map(async (raw) => {
+      if (!raw || typeof raw !== 'object') return raw
+      const mark = raw as Record<string, unknown>
+      if (typeof mark.studentId !== 'string' || typeof mark.classSubjectId !== 'string' || typeof mark.examId !== 'string') return mark
+      const rows = await ConnectionManager.query<{ id: string; updatedAt: string | null }>(
+        'SELECT id, updatedAt FROM MarksEntry WHERE studentId = ? AND classSubjectId = ? AND examId = ? LIMIT 1',
+        [mark.studentId, mark.classSubjectId, mark.examId],
+      )
+      const id = rows[0]?.id
+      const versionRows = id ? await ConnectionManager.query<{ value: string }>('SELECT value FROM AppSetting WHERE key = ? LIMIT 1', [`sync-version-MARK:${id}`]) : []
+      const version = Number(versionRows[0]?.value || 0)
+      return { ...mark, baseVersion: Number.isInteger(version) && version >= 0 ? version : 0, baseUpdatedAt: rows[0]?.updatedAt || null }
+    }))
+    return JSON.stringify(isBulk ? { ...parsed, marks } : marks[0])
+  } catch {
+    return body
   }
 }
 

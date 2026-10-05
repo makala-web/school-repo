@@ -10,21 +10,35 @@ export async function GET(request: NextRequest) {
 
   const authorizedClassIds = await getAuthorizedClassIds(actor, { allowSubjectAssignment: true })
   const classWhere = authorizedClassIds ? { schoolId: actor.schoolId, id: { in: authorizedClassIds } } : { schoolId: actor.schoolId }
+  const ownTeacher = actor.role === 'TEACHER'
+    ? await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
+    : null
+  const assignedTeacherSubjects = actor.role === 'TEACHER' && ownTeacher
+    ? await db.teacherSubject.findMany({ where: { teacherId: ownTeacher.id, class: { schoolId: actor.schoolId }, subject: { schoolId: actor.schoolId } } })
+    : []
+  const assignedSubjectPairs = new Set(assignedTeacherSubjects.map(item => `${item.classId}:${item.subjectId}`))
   const [school, classes, teachers, gradingConfigs, sequence] = await Promise.all([
     // Hydration writes the school row into the local SQLite schema. Return the
     // complete non-sensitive record so required timestamps are preserved.
     db.school.findUnique({ where: { id: actor.schoolId } }),
     db.class.findMany({ where: classWhere, orderBy: { name: 'asc' }, include: { subjects: { include: { subject: true } } } }),
-    db.teacher.findMany({ where: { schoolId: actor.schoolId, ...(authorizedClassIds ? { classTeacherAssignments: { some: { classId: { in: authorizedClassIds }, status: 'ACTIVE' } } } : {}) } }),
+    db.teacher.findMany({ where: { schoolId: actor.schoolId, ...(ownTeacher ? { id: ownTeacher.id } : {}) } }),
     db.gradingConfig.findMany({ where: { schoolId: actor.schoolId } }),
     db.syncSequence.findUnique({ where: { schoolId: actor.schoolId }, select: { nextSequence: true } }),
   ])
   if (!school) return NextResponse.json({ error: 'School not found' }, { status: 404 })
 
+  if (actor.role === 'TEACHER') {
+    for (const classRecord of classes) {
+      classRecord.subjects = classRecord.subjects.filter(item => assignedSubjectPairs.has(`${classRecord.id}:${item.subjectId}`))
+    }
+  }
+
   const classIds = classes.map(item => item.id)
-  const classSubjectIds = classes.flatMap(item => item.subjects.map(subject => subject.subjectId))
+  const classSubjectIds = classes.flatMap(item => item.subjects.map(subject => subject.id))
+  const subjectIds = classes.flatMap(item => item.subjects.map(subject => subject.subjectId))
   const subjects = await db.subject.findMany({
-    where: { schoolId: actor.schoolId, ...(authorizedClassIds ? { id: { in: [...new Set(classSubjectIds)] } } : {}) },
+    where: { schoolId: actor.schoolId, ...(actor.role === 'TEACHER' ? { id: { in: [...new Set(subjectIds)] } } : {}) },
     orderBy: { name: 'asc' },
   })
   const students = await db.student.findMany({ where: { schoolId: actor.schoolId, classId: { in: classIds } } })
@@ -32,11 +46,11 @@ export async function GET(request: NextRequest) {
   const [exams, attendance, marks, results, tabia, assignments, teacherSubjects] = await Promise.all([
     db.exam.findMany({ where: { schoolId: actor.schoolId, classId: { in: classIds } } }),
     db.attendance.findMany({ where: { classId: { in: classIds }, studentId: { in: studentIds } } }),
-    db.marksEntry.findMany({ where: { studentId: { in: studentIds }, exam: { schoolId: actor.schoolId } } }),
-    db.studentResult.findMany({ where: { studentId: { in: studentIds }, exam: { schoolId: actor.schoolId } } }),
+    db.marksEntry.findMany({ where: { studentId: { in: studentIds }, ...(actor.role === 'TEACHER' ? { classSubjectId: { in: classSubjectIds } } : {}), exam: { schoolId: actor.schoolId } } }),
+    actor.role === 'TEACHER' ? Promise.resolve([]) : db.studentResult.findMany({ where: { studentId: { in: studentIds }, exam: { schoolId: actor.schoolId } } }),
     db.tabia.findMany({ where: { studentId: { in: studentIds } } }),
-    db.classTeacherAssignment.findMany({ where: { schoolId: actor.schoolId, classId: { in: classIds } } }),
-    db.teacherSubject.findMany({ where: { classId: { in: classIds }, teacher: { schoolId: actor.schoolId } } }),
+    db.classTeacherAssignment.findMany({ where: { schoolId: actor.schoolId, classId: { in: classIds }, ...(ownTeacher ? { teacherId: ownTeacher.id } : {}) } }),
+    ownTeacher ? Promise.resolve(assignedTeacherSubjects) : db.teacherSubject.findMany({ where: { classId: { in: classIds }, teacher: { schoolId: actor.schoolId } } }),
   ])
   const hydratedEntityIds = [...new Set([
     ...classIds,

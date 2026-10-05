@@ -240,7 +240,7 @@ export default function AppLayout() {
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [renewalSaving, setRenewalSaving] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
-  const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>({ pending: 0, failed: 0, deadLetter: 0, nextRetryAt: null, lastError: null })
+  const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>({ pending: 0, failed: 0, deadLetter: 0, conflicts: 0, nextRetryAt: null, lastError: null })
   const licenseStatus = getSchoolLicenseStatus({
     status: currentSchool?.licenseStatus || currentUser?.school?.licenseStatus || 'ACTIVE',
     expiryDate: currentSchool?.expiryDate || currentUser?.school?.expiryDate || undefined,
@@ -505,7 +505,9 @@ export default function AppLayout() {
          {isOnline && syncStatus.pending > 0 && (
            <div className={`mx-4 mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs md:mx-6 ${syncStatus.failed > 0 ? 'border-red-200 bg-red-50 text-red-900' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
              <CloudUpload className="h-4 w-4 shrink-0" />
-             <span className="flex-1">{syncStatus.deadLetter > 0
+             <span className="flex-1">{syncStatus.conflicts > 0
+               ? `${syncStatus.conflicts} mark conflict(s) need review. Both server and local values are preserved.`
+               : syncStatus.deadLetter > 0
                ? `${syncStatus.deadLetter} synchronization change(s) need attention. Your local data is preserved.`
                : syncStatus.failed > 0
                ? `${syncStatus.failed} synchronization attempt(s) failed. Your local data is preserved and will retry.`

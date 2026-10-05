@@ -75,42 +75,35 @@ export async function GET(request: NextRequest) {
 
     // Get subject assignments (for non-class-teacher subjects)
     const subjectAssignments = await db.teacherSubject.findMany({
-      where: { teacherId, class: { schoolId } },
+      where: { teacherId, class: { schoolId }, subject: { schoolId } },
       include: {
         class: { include: { _count: { select: { students: true } } } },
         subject: true
       }
     });
 
-    const subjectsByClass = new Map<string, string[]>()
-    for (const assignment of subjectAssignments) {
-      const subjects = subjectsByClass.get(assignment.classId) || []
-      subjects.push(assignment.subject.name)
-      subjectsByClass.set(assignment.classId, subjects)
-    }
-
     // Prepare response
-    const classTeacherClasses = assignments.map(a => ({
-      id: a.class.id,
-      name: a.class.name,
-      fullName: a.class.fullName,
-      studentCount: a.class.students.length,
-      role: 'CLASS_TEACHER' as const,
-      startDate: a.startDate
-      ,subjects: subjectsByClass.get(a.classId) || []
-    }));
-
-    const subjectOnlyClasses = subjectAssignments
-      .filter(sa => !assignments.some(a => a.classId === sa.classId)) // Exclude already listed classes
-      .map(sa => ({
-        id: sa.class.id,
-        name: sa.class.name,
-        fullName: sa.class.fullName,
-        subject: sa.subject.name,
-        studentCount: sa.class._count.students,
-        role: 'SUBJECT_TEACHER' as const,
-        subjects: [sa.subject.name]
-      }));
+    const classIds = [...new Set([...assignments.map(a => a.classId), ...subjectAssignments.map(a => a.classId)])]
+    const classRecords = await db.class.findMany({
+      where: { id: { in: classIds }, schoolId },
+      include: { _count: { select: { students: true } } },
+      orderBy: { name: 'asc' },
+    })
+    const subjectsByClassId = new Map<string, Array<{ id: string; name: string; shortName: string | null }>>()
+    for (const item of subjectAssignments) {
+      const subjects = subjectsByClassId.get(item.classId) || []
+      subjects.push({ id: item.subject.id, name: item.subject.name, shortName: item.subject.shortName })
+      subjectsByClassId.set(item.classId, subjects)
+    }
+    const classTeacherIds = new Set(assignments.map(a => a.classId))
+    const classes = classRecords.map(item => ({
+      id: item.id,
+      name: item.name,
+      fullName: item.fullName,
+      studentCount: item._count.students,
+      role: classTeacherIds.has(item.id) ? 'CLASS_TEACHER' as const : 'SUBJECT_TEACHER' as const,
+      subjects: subjectsByClassId.get(item.id) || [],
+    }))
 
     // Get head teacher status
     const schoolLeadership = await db.schoolLeadership.findUnique({
@@ -127,10 +120,11 @@ export async function GET(request: NextRequest) {
         isHeadTeacher,
         email: teacher.user?.email
       },
-      classTeacherAssignments: classTeacherClasses,
-      subjectOnlyAssignments: subjectOnlyClasses,
-      totalClasses: classTeacherClasses.length + subjectOnlyClasses.length,
-      isMultiClassTeacher: classTeacherClasses.length > 1
+      classes,
+      classTeacherAssignments: classes.filter(item => item.role === 'CLASS_TEACHER'),
+      subjectOnlyAssignments: classes.filter(item => item.role === 'SUBJECT_TEACHER'),
+      totalClasses: classes.length,
+      isMultiClassTeacher: classes.filter(item => item.role === 'CLASS_TEACHER').length > 1
     });
   } catch (error) {
     console.error('Error fetching teacher classes:', error);

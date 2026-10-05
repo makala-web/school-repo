@@ -1,0 +1,126 @@
+import { ExamRepository, MarksRepository, ResultsRepository, SchoolRepository, StudentRepository } from '@/repositories'
+
+export interface SmsMessagePreview {
+  studentId: string
+  studentName: string
+  examType?: string
+  totalMarks?: number | null
+  averageMarks?: number | null
+  rank?: number | null
+  totalStudents?: number
+  phone: string | null
+  message: string
+  ready: boolean
+  reason?: string
+}
+
+function formatNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-'
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+function buildMessage(input: {
+  studentName: string
+  examName: string
+  schoolName: string
+  marks: Array<{ subjectName: string; marks: number | null; grade: string | null }>
+  totalMarks: number | null
+  averageMarks: number | null
+  rank: number | null
+  totalStudents: number
+}): string {
+  const subjectLines = input.marks
+    .map(mark => `${mark.subjectName.toLowerCase()}: ${formatNumber(mark.marks)} (${(mark.grade || '-').toLowerCase()})`)
+    .join('\n')
+
+  return [
+    `ndugu mzazi wa ${input.studentName},`,
+    '',
+    `matokeo ya mwanao kwa mtihani wa ${input.examName} ni kama ifuatavyo:`,
+    '',
+    subjectLines || 'hakuna alama zilizorekodiwa.',
+    '',
+    `jumla ya alama: ${formatNumber(input.totalMarks)}`,
+    '',
+    `wastani: ${formatNumber(input.averageMarks)}`,
+    '',
+    `mwanao amekuwa mwanafunzi wa ${input.rank ?? '-'}`,
+    '',
+    `kati ya wanafunzi ${input.totalStudents}`,
+    '',
+    'waliofanya mtihani huu.',
+    '',
+    `taarifa hii imetolewa na ofisi ya taaluma ya ${input.schoolName}.`,
+    '',
+    'asante.',
+  ].join('\n')
+}
+
+export class SmsResultsService {
+  static async prepareForStudent(examId: string, studentId: string): Promise<SmsMessagePreview> {
+    const student = await StudentRepository.getById(studentId)
+    if (!student) {
+      throw new Error('Student not found')
+    }
+
+    const exam = await ExamRepository.getById(examId)
+    if (!exam) {
+      throw new Error('Exam not found')
+    }
+
+    const school = await SchoolRepository.getById(exam.schoolId || student.schoolId)
+    const result = await ResultsRepository.getByStudentAndExam(studentId, examId)
+    const classResults = await ResultsRepository.getAll({ examId, classId: exam.classId })
+    const marks = await MarksRepository.getByStudentAndExam(studentId, examId)
+
+    const subjectMarks = marks.map(mark => ({
+      subjectName: mark.classSubject.subject.shortName || mark.classSubject.subject.name,
+      marks: mark.marks ?? null,
+      grade: mark.grade ?? null,
+    }))
+
+    const totalMarks = result?.totalMarks ?? subjectMarks.reduce((sum, mark) => sum + (mark.marks ?? 0), 0)
+    const averageMarks = result?.averageMarks ?? (subjectMarks.length > 0 ? totalMarks / subjectMarks.length : null)
+    const totalStudents = classResults.length || 1
+    const phone = student.parentPhone?.trim() || null
+
+    return {
+      studentId: student.id,
+      studentName: student.fullName,
+      examType: exam.examType || exam.name,
+      totalMarks,
+      averageMarks,
+      rank: result?.rank ?? null,
+      totalStudents,
+      phone,
+      ready: Boolean(phone),
+      reason: phone ? undefined : 'Parent phone number is missing',
+      message: buildMessage({
+        studentName: student.fullName,
+        examName: exam.examType || exam.name,
+        schoolName: school?.name || 'Shule',
+        marks: subjectMarks,
+        totalMarks,
+        averageMarks,
+        rank: result?.rank ?? null,
+        totalStudents,
+      }),
+    }
+  }
+
+  static async prepareForExam(examId: string): Promise<SmsMessagePreview[]> {
+    const exam = await ExamRepository.getById(examId)
+    if (!exam) {
+      throw new Error('Exam not found')
+    }
+
+    const students = await StudentRepository.getAll({ classId: exam.classId, status: 'ACTIVE' })
+    const previews: SmsMessagePreview[] = []
+
+    for (const student of students) {
+      previews.push(await this.prepareForStudent(examId, student.id))
+    }
+
+    return previews
+  }
+}

@@ -15,7 +15,6 @@ export async function GET(request: NextRequest) {
     const schoolId = searchParams.get('schoolId');
     const classId = searchParams.get('classId');
     const actorUserId = searchParams.get('actorUserId');
-    const academicYear = searchParams.get('academicYear');
 
     if (!teacherId || !schoolId || !actorUserId) {
       return NextResponse.json(
@@ -74,22 +73,14 @@ export async function GET(request: NextRequest) {
       }
 
       // Check if teacher is assigned to this class
-      const isAssigned = await db.classTeacherAssignment.findFirst({
-        where: {
-          teacherId,
-          classId,
-          status: 'ACTIVE'
-        }
-      });
-
-      if (!isAssigned) {
+      if (actor.role === 'TEACHER') {
         const isSubjectTeacher = await db.teacherSubject.findFirst({
-          where: { teacherId, classId }
+          where: { teacherId, classId, class: { schoolId }, subject: { schoolId } },
+          select: { id: true },
         });
-
         if (!isSubjectTeacher) {
           return NextResponse.json(
-            { error: 'Teacher not assigned to this class' },
+            { error: 'Teacher has no active subject assignment for this class' },
             { status: 403 }
           );
         }
@@ -97,24 +88,12 @@ export async function GET(request: NextRequest) {
 
       authorizedClassIds = [classId];
     } else {
-      // Get all classes where teacher is assigned (as class teacher or subject teacher)
-      const classTeacherAssignments = await db.classTeacherAssignment.findMany({
-        where: {
-          teacherId,
-          schoolId,
-          status: 'ACTIVE',
-          ...(academicYear && { academicYear })
-        },
-        select: { classId: true }
-      });
-
       const subjectAssignments = await db.teacherSubject.findMany({
-        where: { teacherId },
-        select: { classId: true }
+        where: { teacherId, class: { schoolId }, subject: { schoolId } },
+        select: { classId: true },
       });
 
       authorizedClassIds = [
-        ...classTeacherAssignments.map(a => a.classId),
         ...subjectAssignments.map(a => a.classId)
       ];
 
@@ -132,6 +111,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Get students in authorized classes
+    const assignedSubjectIds = actor.role === 'TEACHER'
+      ? (await db.teacherSubject.findMany({ where: { teacherId, classId: { in: authorizedClassIds }, class: { schoolId }, subject: { schoolId } }, select: { subjectId: true } })).map(item => item.subjectId)
+      : undefined
     const students = await db.student.findMany({
       where: {
         schoolId,
@@ -141,10 +123,11 @@ export async function GET(request: NextRequest) {
       include: {
         class: true,
         marks: {
+          ...(assignedSubjectIds ? { where: { classSubject: { subjectId: { in: assignedSubjectIds } } } } : {}),
           include: { exam: true, classSubject: { include: { subject: true } } }
         },
         attendance: true,
-        results: true
+        ...(actor.role === 'TEACHER' ? {} : { results: true })
       },
       orderBy: [{ class: { name: 'asc' } }, { fullName: 'asc' }]
     });

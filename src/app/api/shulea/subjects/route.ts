@@ -49,7 +49,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const subjects = await SubjectRepository.getAll({ schoolId: actor.schoolId, schoolType });
+    let subjects = await SubjectRepository.getAll({ schoolId: actor.schoolId, schoolType });
+    if (actor.role === 'TEACHER') {
+      const assignments = await db.teacherSubject.findMany({
+        where: { teacher: { userId: actor.id, schoolId: actor.schoolId }, subject: { schoolId: actor.schoolId }, ...(schoolType ? { class: { schoolType } } : {}) },
+        select: { subjectId: true },
+      })
+      const authorizedSubjectIds = new Set(assignments.map(item => item.subjectId))
+      subjects = subjects.filter(subject => authorizedSubjectIds.has(subject.id))
+    }
     const masterNames = getMasterSubjectNames(effectiveSchoolType)
 
     return NextResponse.json({
@@ -83,8 +91,12 @@ async function handleGetClassSubjects(request: NextRequest) {
     if (actor.role === 'TEACHER' && !(await canAccessClass(actor, classId, { allowSubjectAssignment: true }))) {
       return NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 })
     }
+    const assignmentIds = actor.role === 'TEACHER'
+      ? (await db.teacherSubject.findMany({ where: { teacher: { userId: actor.id, schoolId: actor.schoolId }, classId, subject: { schoolId: actor.schoolId } }, select: { subjectId: true } })).map(item => item.subjectId)
+      : undefined
+    if (actor.role === 'TEACHER' && !assignmentIds?.length) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
     const classSubjects = await db.classSubject.findMany({
-      where: { classId },
+      where: { classId, ...(assignmentIds ? { subjectId: { in: assignmentIds } } : {}) },
       include: {
         subject: {
           select: {

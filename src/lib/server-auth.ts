@@ -64,14 +64,61 @@ export async function canAccessClass(
     where: { teacherId: teacher.id, classId, schoolId: actor.schoolId, status: 'ACTIVE' },
     select: { id: true },
   })
-  if (classTeacherAssignment) return true
+  // Class-teacher duties grant class administration, not blanket access to
+  // every subject's marks. Subject access is always checked separately.
+  if (classTeacherAssignment && !options.allowSubjectAssignment) return true
   if (!options.allowSubjectAssignment) return false
 
   const subjectAssignment = await db.teacherSubject.findFirst({
-    where: { teacherId: teacher.id, classId },
+    where: { teacherId: teacher.id, classId, class: { schoolId: actor.schoolId }, subject: { schoolId: actor.schoolId } },
     select: { id: true },
   })
   return Boolean(subjectAssignment)
+}
+
+export async function canAccessTeacherSubject(
+  actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
+  classId: string,
+  subjectId: string,
+) {
+  if (actor.role === 'SCHOOL_ADMIN' || actor.role === 'SUPER_ADMIN') return canAccessClass(actor, classId)
+  if (actor.role !== 'TEACHER' || !actor.schoolId) return false
+  const assignment = await db.teacherSubject.findFirst({
+    where: {
+      classId,
+      subjectId,
+      class: { schoolId: actor.schoolId },
+      subject: { schoolId: actor.schoolId },
+      teacher: { userId: actor.id, schoolId: actor.schoolId },
+    },
+    select: { id: true },
+  })
+  return Boolean(assignment)
+}
+
+export async function authorizeMarkMutation(
+  actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
+  input: { classId?: string | null; studentId: string; classSubjectId: string; examId: string },
+) {
+  const [classSubject, student, exam] = await Promise.all([
+    db.classSubject.findUnique({ where: { id: input.classSubjectId }, select: { id: true, classId: true, subjectId: true, class: { select: { schoolId: true, schoolType: true } }, subject: { select: { schoolId: true } } } }),
+    db.student.findUnique({ where: { id: input.studentId }, select: { classId: true, schoolId: true } }),
+    db.exam.findUnique({ where: { id: input.examId }, select: { classId: true, schoolId: true } }),
+  ])
+  if (!classSubject || !student || !exam || (input.classId && classSubject.classId !== input.classId) || student.classId !== classSubject.classId || exam.classId !== classSubject.classId || student.schoolId !== actor.schoolId || exam.schoolId !== actor.schoolId || classSubject.class.schoolId !== actor.schoolId || classSubject.subject.schoolId !== actor.schoolId) {
+    return { ok: false as const, status: 400, error: 'Teacher, school, class, subject, student and exam must match' }
+  }
+  if (actor.role === 'TEACHER' && !(await canAccessTeacherSubject(actor, classSubject.classId, classSubject.subjectId))) {
+    return { ok: false as const, status: 403, error: 'Teacher is not assigned to this subject in this class' }
+  }
+  if (actor.role !== 'TEACHER' && actor.role !== 'SCHOOL_ADMIN') {
+    return { ok: false as const, status: 403, error: 'This account cannot enter marks' }
+  }
+  const existing = await db.marksEntry.findUnique({ where: { studentId_classSubjectId_examId: { studentId: input.studentId, classSubjectId: input.classSubjectId, examId: input.examId } }, select: { id: true, recordedByUserId: true, marks: true, updatedAt: true } })
+  if (actor.role === 'TEACHER' && existing && existing.recordedByUserId !== actor.id) {
+    return { ok: false as const, status: 403, error: 'Teachers can only edit marks they recorded. Ask a school administrator to change this mark.' }
+  }
+  return { ok: true as const, classSubject, existing }
 }
 
 export async function getAuthorizedClassIds(
@@ -84,17 +131,19 @@ export async function getAuthorizedClassIds(
 
   const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
   if (!teacher) return []
-  const assignments = await db.classTeacherAssignment.findMany({
-    where: { teacherId: teacher.id, schoolId: actor.schoolId, status: 'ACTIVE' },
-    select: { classId: true },
-  })
-  const classIds = assignments.map(item => item.classId)
+  const classIds: string[] = []
   if (options.allowSubjectAssignment) {
     const subjectAssignments = await db.teacherSubject.findMany({
-      where: { teacherId: teacher.id },
+      where: { teacherId: teacher.id, class: { schoolId: actor.schoolId }, subject: { schoolId: actor.schoolId } },
       select: { classId: true },
     })
     classIds.push(...subjectAssignments.map(item => item.classId))
+  } else {
+    const assignments = await db.classTeacherAssignment.findMany({
+      where: { teacherId: teacher.id, schoolId: actor.schoolId, status: 'ACTIVE' },
+      select: { classId: true },
+    })
+    classIds.push(...assignments.map(item => item.classId))
   }
   return [...new Set(classIds)]
 }

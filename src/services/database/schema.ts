@@ -264,6 +264,7 @@ export const TABLES = {
       marks REAL,
       grade TEXT,
       remarks TEXT,
+      recordedByUserId TEXT,
       createdAt TEXT NOT NULL,
       updatedAt TEXT NOT NULL,
       FOREIGN KEY (studentId) REFERENCES Student(id) ON DELETE CASCADE,

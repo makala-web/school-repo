@@ -16,7 +16,7 @@ const TABLE_FIELDS: Record<string, string[]> = {
   TeacherSubject: ['id', 'teacherId', 'subjectId', 'classId', 'createdAt'],
   Exam: ['id', 'name', 'examType', 'classId', 'schoolId', 'academicYear', 'term', 'examDate', 'createdAt', 'updatedAt'],
   Attendance: ['id', 'studentId', 'classId', 'date', 'status', 'createdAt', 'updatedAt'],
-  MarksEntry: ['id', 'studentId', 'classSubjectId', 'examId', 'marks', 'grade', 'remarks', 'createdAt', 'updatedAt'],
+  MarksEntry: ['id', 'studentId', 'classSubjectId', 'examId', 'marks', 'grade', 'remarks', 'recordedByUserId', 'createdAt', 'updatedAt'],
   StudentResult: ['id', 'studentId', 'examId', 'classId', 'totalMarks', 'averageMarks', 'grade', 'division', 'points', 'rank', 'status', 'subjectCount', 'classTeacherComment', 'headTeacherComment', 'closingDate', 'openingDate', 'classTeacherSign', 'headTeacherSign', 'createdAt', 'updatedAt'],
   Tabia: ['id', 'studentId', 'classId', 'examId', 'discipline', 'hygiene', 'hardWorking', 'cooperation', 'honesty', 'leadership', 'sports', 'createdAt', 'updatedAt'],
   GradingConfig: ['id', 'schoolType', 'grade', 'minMark', 'maxMark', 'remarks', 'points', 'division', 'schoolId', 'createdAt', 'updatedAt'],
@@ -24,9 +24,14 @@ const TABLE_FIELDS: Record<string, string[]> = {
 
 const LOCAL_SCOPE_KEY = 'offline-local-scope'
 
-export async function ensureAuthorizedLocalScope() {
-  const scope = getActiveDataScope()
+function isCurrentScope(scope: { userId?: string | null; schoolId?: string | null }) {
+  const current = getActiveDataScope()
+  return current.userId === scope.userId && current.schoolId === scope.schoolId
+}
+
+export async function ensureAuthorizedLocalScope(scope: { userId: string | null; schoolId: string | null } = getActiveDataScope()) {
   if (!scope.userId || !scope.schoolId) return
+  if (!isCurrentScope(scope)) return
 
   const current = await ConnectionManager.query<{ value: string }>(
     'SELECT value FROM AppSetting WHERE key = ? LIMIT 1',
@@ -34,6 +39,7 @@ export async function ensureAuthorizedLocalScope() {
   )
   const expected = `${scope.userId}:${scope.schoolId}`
   if (current[0]?.value === expected) return
+  if (!isCurrentScope(scope)) return
 
   await SchemaManager.reset()
   await SchemaManager.initialize()
@@ -84,16 +90,18 @@ function safeUpsert(table: string, record: RecordValue) {
   return queries
 }
 
-export async function hydrateAuthorizedDevice() {
+export async function hydrateAuthorizedDevice(scope: { userId: string | null; schoolId: string | null } = getActiveDataScope()) {
   if (typeof window === 'undefined' || navigator.onLine === false) return { hydrated: false, reason: 'offline' }
+  if (!scope.userId || !scope.schoolId || !isCurrentScope(scope)) return { hydrated: false, reason: 'scope-changed' }
   // Hydration is a browser-local operation. API calls may have switched the
   // shared manager to Prisma mode before this function runs.
   ConnectionManager.setMode('sqlite')
   await ConnectionManager.getSQLite()
   await SchemaManager.initialize()
-  await ensureAuthorizedLocalScope()
+  await ensureAuthorizedLocalScope(scope)
   const response = await fetch('/api/sync/bootstrap', { credentials: 'same-origin', cache: 'no-store' })
   if (!response.ok) throw new Error(`Initial synchronization failed (${response.status})`)
+  if (!isCurrentScope(scope)) return { hydrated: false, reason: 'scope-changed' }
   const data = await response.json() as RecordValue & { classes?: RecordValue[]; subjects?: RecordValue[]; teachers?: RecordValue[]; students?: RecordValue[]; exams?: RecordValue[]; attendance?: RecordValue[]; marks?: RecordValue[]; results?: RecordValue[]; tabia?: RecordValue[]; gradingConfigs?: RecordValue[]; teacherSubjects?: RecordValue[]; assignments?: RecordValue[]; versions?: Array<{ entityType: string; entityId: string; version: number }>; cursor?: number }
   const queries: Array<{ sql: string; params?: unknown[] }> = []
   if (data.school) queries.push(...safeUpsert('School', data.school as RecordValue))
@@ -137,33 +145,42 @@ const ENTITY_TABLE: Record<string, string> = {
 }
 
 let activeSyncCycle: Promise<{ synced: number; pulled: number }> | null = null
+let activeSyncScope = ''
 
 export async function runAuthorizedSyncCycle(scope: { userId?: string | null; schoolId?: string | null }) {
   if (!scope.userId || !scope.schoolId) return { synced: 0, pulled: 0 }
-  if (activeSyncCycle) return activeSyncCycle
+  if (!isCurrentScope(scope)) return { synced: 0, pulled: 0 }
+  const authorizedScope = { userId: scope.userId, schoolId: scope.schoolId }
+  const scopeKey = `${scope.userId}:${scope.schoolId}`
+  if (activeSyncCycle && activeSyncScope === scopeKey) return activeSyncCycle
+  if (activeSyncCycle) await activeSyncCycle.catch(() => undefined)
+  if (!isCurrentScope(scope)) return { synced: 0, pulled: 0 }
 
+  activeSyncScope = scopeKey
   activeSyncCycle = (async () => {
     if (typeof window !== 'undefined' && navigator.onLine) {
-      await flushOfflineMutations({ userId: scope.userId, schoolId: scope.schoolId })
-      await pullAuthorizedChanges()
+      await flushOfflineMutations(authorizedScope)
+      await pullAuthorizedChanges(authorizedScope)
       return { synced: 1, pulled: 1 }
     }
     return { synced: 0, pulled: 0 }
   })().finally(() => {
     activeSyncCycle = null
+    activeSyncScope = ''
   })
 
   return activeSyncCycle
 }
 
-export async function pullAuthorizedChanges() {
+export async function pullAuthorizedChanges(scope: { userId: string | null; schoolId: string | null } = getActiveDataScope()) {
   if (typeof window === 'undefined' || navigator.onLine === false) return { pulled: 0 }
+  if (!scope.userId || !scope.schoolId || !isCurrentScope(scope)) return { pulled: 0 }
   // Pull writes the response into the device database, never into Prisma.
   ConnectionManager.setMode('sqlite')
   await ConnectionManager.getSQLite()
   await SchemaManager.initialize()
-  await ensureAuthorizedLocalScope()
-  const activeSchoolId = getActiveDataScope().schoolId
+  await ensureAuthorizedLocalScope(scope)
+  const activeSchoolId = scope.schoolId
   if (!activeSchoolId) return { pulled: 0 }
   const schoolRows = await ConnectionManager.query<{ key: string; value: string }>(
     'SELECT key, value FROM AppSetting WHERE key = ? LIMIT 1',
@@ -183,6 +200,7 @@ export async function pullAuthorizedChanges() {
     if (!replay.ok) throw new Error(`Permission synchronization failed (${replay.status})`)
     data = await replay.json() as typeof data
   }
+  if (!isCurrentScope(scope)) return { pulled: 0 }
   const queries: Array<{ sql: string; params?: unknown[] }> = []
   for (const change of data.changes || []) {
     const table = ENTITY_TABLE[change.entityType]

@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, schoolId, inviteCode, email, fullName, role, assignedClasses, assignedSubjects, expiryDays } = body
+    const { action, schoolId, inviteCode, email, fullName, role, assignedClasses, assignedSubjects, assignedTeacherSubjects, expiryDays } = body
 
     if (action === 'create-invitation') {
       // Create teacher invitation
@@ -122,10 +122,17 @@ export async function POST(request: NextRequest) {
       }
 
       const requestedRole = role === 'SCHOOL_ADMIN' && user.role === 'SUPER_ADMIN' ? 'SCHOOL_ADMIN' : 'TEACHER'
-      const requestedClassIds = Array.isArray(assignedClasses)
+      const requestedMappings = Array.isArray(assignedTeacherSubjects)
+        ? assignedTeacherSubjects.filter((value: unknown): value is { classId: string; subjectId: string } => !!value && typeof value === 'object' && typeof (value as any).classId === 'string' && typeof (value as any).subjectId === 'string')
+        : []
+      const requestedClassIds = requestedMappings.length
+        ? [...new Set(requestedMappings.map((item: { classId: string }) => item.classId))]
+        : Array.isArray(assignedClasses)
         ? assignedClasses.filter((value: unknown): value is string => typeof value === 'string')
         : []
-      const requestedSubjectIds = Array.isArray(assignedSubjects)
+      const requestedSubjectIds = requestedMappings.length
+        ? [...new Set(requestedMappings.map((item: { subjectId: string }) => item.subjectId))]
+        : Array.isArray(assignedSubjects)
         ? assignedSubjects.filter((value: unknown): value is string => typeof value === 'string')
         : []
 
@@ -143,6 +150,10 @@ export async function POST(request: NextRequest) {
           if (validSubjects !== requestedSubjectIds.length) {
             return NextResponse.json({ success: false, error: 'One or more assigned subjects do not belong to this school' }, { status: 400 })
           }
+        }
+        if (requestedMappings.length) {
+          const validClassSubjects = await db.classSubject.count({ where: { OR: requestedMappings.map((item: { classId: string; subjectId: string }) => ({ classId: item.classId, subjectId: item.subjectId, class: { schoolId }, subject: { schoolId } })) } })
+          if (validClassSubjects !== requestedMappings.length) return NextResponse.json({ success: false, error: 'Each selected subject must be offered in its selected class' }, { status: 400 })
         }
       }
 
@@ -179,6 +190,7 @@ export async function POST(request: NextRequest) {
           role: requestedRole,
           assignedClasses: JSON.stringify(requestedClassIds),
           assignedSubjects: JSON.stringify(requestedSubjectIds),
+          assignedTeacherSubjects: requestedMappings.length ? JSON.stringify(requestedMappings) : null,
           status: 'PENDING',
           expiresAt: expiresAt.toISOString(),
         }
@@ -196,6 +208,7 @@ export async function POST(request: NextRequest) {
           expiresAt: invitation.expiresAt,
           assignedClasses: invitation.assignedClasses ? JSON.parse(invitation.assignedClasses) : [],
           assignedSubjects: invitation.assignedSubjects ? JSON.parse(invitation.assignedSubjects) : [],
+          assignedTeacherSubjects: invitation.assignedTeacherSubjects ? JSON.parse(invitation.assignedTeacherSubjects) : [],
           delivery: 'SERVER_SAVED',
         }
       })

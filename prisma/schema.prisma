@@ -112,6 +112,7 @@ model User {
   receivedInvitation Invitation?     @relation("InvitationReceiver")
   sessions           AuthSession[]
   syncOperations     SyncOperation[]
+  authoredMarks      MarksEntry[]   @relation("MarkAuthor")
 }
 
 model AuthSession {
@@ -166,6 +167,7 @@ model Invitation {
   role             String    @default("TEACHER")
   assignedClasses  String // JSON string of class IDs
   assignedSubjects String // JSON string of subject IDs
+  assignedTeacherSubjects String? // JSON array of { classId, subjectId } assignments
   status           String    @default("PENDING") // PENDING, ACCEPTED, EXPIRED, REVOKED
   expiresAt        DateTime
   acceptedAt       DateTime?
@@ -291,6 +293,8 @@ model TeacherSubject {
   class   Class   @relation(fields: [classId], references: [id])
 
   @@unique([teacherId, subjectId, classId])
+  @@index([teacherId, classId])
+  @@index([classId, subjectId])
 }
 
 // ============ EXAMS ============
@@ -321,12 +325,14 @@ model MarksEntry {
   marks          Float? // the actual score
   grade          String? // computed grade (A, B, C, D, E, F)
   remarks        String? // e.g. "Excellent", "Good"
+  recordedByUserId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   student      Student      @relation(fields: [studentId], references: [id])
   classSubject ClassSubject @relation(fields: [classSubjectId], references: [id])
   exam         Exam         @relation(fields: [examId], references: [id])
+  recordedBy   User?        @relation("MarkAuthor", fields: [recordedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([studentId, classSubjectId, examId])
 }

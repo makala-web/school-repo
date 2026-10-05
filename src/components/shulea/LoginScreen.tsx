@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getStoredOfflineSessions, useAppStore, type User as StoreUser } from '@/lib/store'
+import { useAppStore } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import { getDeviceInfo } from '@/lib/access-control'
 import { provisionOfflineDemo, provisionOfflineLogin } from '@/services/database/OfflineAuth'
@@ -26,7 +26,6 @@ export default function LoginScreen() {
   const [hasUsers, setHasUsers] = useState(true)
   const [loginError, setLoginError] = useState('')
   const [isOffline, setIsOffline] = useState(false)
-  const [offlineSessions, setOfflineSessions] = useState<StoreUser[]>([])
 
   // Login form
   const [loginEmail, setLoginEmail] = useState('')
@@ -47,7 +46,6 @@ export default function LoginScreen() {
     function refreshOfflineState() {
       const offline = typeof navigator !== 'undefined' && !navigator.onLine
       setIsOffline(offline)
-      setOfflineSessions(offline ? getStoredOfflineSessions() : [])
     }
 
     refreshOfflineState()
@@ -127,12 +125,6 @@ export default function LoginScreen() {
       login(data.user)
     } catch (err: unknown) {
       const rawMessage = err instanceof Error ? err.message : 'Login failed'
-      const savedSession = offlineSessions.find(session => session.email.toLowerCase() === loginEmail.trim().toLowerCase())
-      if (typeof navigator !== 'undefined' && !navigator.onLine && savedSession && /not available|not initialized|offline database|network|failed to fetch/i.test(rawMessage)) {
-        login(savedSession)
-        toast.success('Continuing with the previously synchronized offline session.')
-        return
-      }
       const networkLoginFailed = /failed to fetch|network/i.test(rawMessage)
       const errorMsg = networkLoginFailed
         ? 'The server is unavailable. If this account has completed offline setup on this device, turn off the network and try offline login again.'
@@ -142,11 +134,6 @@ export default function LoginScreen() {
     } finally {
       setLoading(false)
     }
-  }
-
-  function continueOffline(user: StoreUser) {
-    login(user)
-    toast.success('Continuing with the previously synchronized offline session.')
   }
 
   async function handleAcceptInvitation(e: React.FormEvent) {
@@ -260,20 +247,9 @@ export default function LoginScreen() {
                     <p className="font-medium">{loginError}</p>
                   </div>
                 )}
-                {isOffline && offlineSessions.length > 0 && (
+                {isOffline && (
                   <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                    <p className="font-medium">Internet is unavailable. Continue with a previously opened account on this device.</p>
-                    {offlineSessions.map(session => (
-                      <Button
-                        key={session.id}
-                        type="button"
-                        variant="outline"
-                        className="w-full justify-start bg-white"
-                        onClick={() => continueOffline(session)}
-                      >
-                        {session.fullName || session.email}
-                      </Button>
-                    ))}
+                    <p className="font-medium">Internet is unavailable. Enter your email and password saved on this device to sign in offline.</p>
                   </div>
                 )}
                 <div className="space-y-2">

@@ -26,7 +26,7 @@ interface Stats {
 }
 
 interface TeacherWorkspace {
-  classes: { id: string; name: string; fullName?: string; studentCount: number; role: string; subject?: string; subjects?: string[] }[]
+  classes: { id: string; name: string; fullName?: string; studentCount: number; role: string; subjects?: Array<{ id: string; name: string; shortName?: string | null }> }[]
   students: { id: string; fullName: string; class?: { fullName?: string } }[]
   subjects: string[]
   isHeadTeacher: boolean
@@ -100,8 +100,8 @@ export default function Dashboard() {
             apiCall(`/api/shulea/teacher-classes?teacherId=${teacher.id}&schoolId=${currentSchool.id}&actorUserId=${currentUser.id}`),
             apiCall(`/api/shulea/teacher-students?teacherId=${teacher.id}&schoolId=${currentSchool.id}&actorUserId=${currentUser.id}`),
           ])
-          const assignedClasses = [...(classData.classTeacherAssignments || []), ...(classData.subjectOnlyAssignments || [])]
-          const assignedSubjects = assignedClasses.flatMap((item: { subjects?: string[]; subject?: string }) => item.subjects || (item.subject ? [item.subject] : []))
+          const assignedClasses = classData.classes || [...(classData.classTeacherAssignments || []), ...(classData.subjectOnlyAssignments || [])]
+          const assignedSubjects = assignedClasses.flatMap((item: { subjects?: Array<{ name: string }> }) => (item.subjects || []).map(subject => subject.name))
           setTeacherWorkspace({
             classes: assignedClasses,
             students: studentData.students || [],
@@ -286,9 +286,13 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-wrap gap-2">
               {teacherWorkspace.classes.map((item) => (
-                <Badge key={`${item.id}-${item.role}-${item.subject || ''}`} variant="outline" className="border-blue-200 bg-blue-50/50 text-blue-800">
-                  {item.fullName || item.name}{item.subject ? ` - ${item.subject}` : ''}
-                </Badge>
+                <div key={item.id} className="w-full rounded-lg border border-blue-100 p-3">
+                  <p className="font-semibold text-slate-800">{item.fullName || item.name}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(item.subjects || []).map(subject => <Button key={subject.id} size="sm" variant="outline" className="border-emerald-200 bg-emerald-50/60 text-emerald-800" onClick={() => setView('marks')}>{subject.name} · Enter marks</Button>)}
+                    {!item.subjects?.length && <span className="text-sm text-muted-foreground">No subjects assigned.</span>}
+                  </div>
+                </div>
               ))}
               {teacherWorkspace.classes.length === 0 && <p className="text-sm text-muted-foreground">No class or subject assignment has been linked to your account yet.</p>}
             </div>

@@ -1,6 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { canAccessClass, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+import { authorizeMarkMutation, canAccessClass, canAccessTeacherSubject, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+
+async function recordMarkSyncChanges(records: Array<{ id: string; schoolId: string; [key: string]: unknown }>, operationId?: string | null) {
+  for (const record of records) {
+    await db.$transaction(async tx => {
+      const previous = await tx.syncChange.findFirst({ where: { schoolId: record.schoolId, entityType: 'MARK', entityId: record.id }, orderBy: { sequence: 'desc' }, select: { version: true } })
+      const sequence = await tx.syncSequence.upsert({ where: { schoolId: record.schoolId }, create: { schoolId: record.schoolId, nextSequence: 1 }, update: { nextSequence: { increment: 1 } }, select: { nextSequence: true } })
+      await tx.syncChange.create({ data: { schoolId: record.schoolId, sequence: sequence.nextSequence, entityType: 'MARK', entityId: record.id, action: 'UPSERT', version: (previous?.version || 0) + 1, operationId: operationId || undefined, payload: JSON.stringify(record) } })
+    })
+  }
+}
+
+async function checkMarkVersionConflict(input: { schoolId: string; operationId?: string | null; entityId?: string; baseVersion?: number; baseUpdatedAt?: string | null; clientMark: Record<string, unknown>; serverMark: { id: string; marks: number | null; recordedByUserId: string | null; updatedAt: Date } | null }) {
+  if (input.baseVersion === undefined || !input.serverMark) return null
+  const latest = await db.syncChange.findFirst({ where: { schoolId: input.schoolId, entityType: 'MARK', entityId: input.serverMark.id }, orderBy: { sequence: 'desc' }, select: { version: true, payload: true } })
+  const serverVersion = latest?.version || 0
+  const staleByVersion = serverVersion > input.baseVersion
+  const staleByTime = Boolean(input.baseUpdatedAt && input.serverMark.updatedAt.getTime() > new Date(input.baseUpdatedAt).getTime())
+  if (!staleByVersion && !staleByTime) return null
+  const conflict = {
+    studentId: input.clientMark.studentId,
+    classSubjectId: input.clientMark.classSubjectId,
+    examId: input.clientMark.examId,
+    localMark: input.clientMark.marks,
+    serverMark: input.serverMark.marks,
+    localVersion: input.baseVersion,
+    serverVersion,
+    recordedByUserId: input.serverMark.recordedByUserId,
+    localUpdatedAt: input.baseUpdatedAt || null,
+    serverUpdatedAt: input.serverMark.updatedAt,
+  }
+  if (input.operationId) await db.syncConflict.create({ data: { schoolId: input.schoolId, operationId: input.operationId, entityType: 'MARK', entityId: input.serverMark.id, baseVersion: input.baseVersion, serverVersion, clientPayload: JSON.stringify({ mark: input.clientMark, localVersion: input.baseVersion, localUpdatedAt: input.baseUpdatedAt || null }), serverPayload: JSON.stringify({ mark: input.serverMark, serverVersion, ledgerPayload: latest?.payload ? JSON.parse(latest.payload) : null }) } })
+  return conflict
+}
 
 // Required for static export
 
@@ -87,15 +120,10 @@ export async function GET(request: NextRequest) {
     let subjectOnlyIds: string[] | null = null
     if (actor.role === 'TEACHER') {
       const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-      const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId, status: 'ACTIVE' }, select: { id: true } }) : null
-      if (!classTeacher && teacher) {
-        const assignments = await db.teacherSubject.findMany({ where: { teacherId: teacher.id, classId }, select: { subjectId: true } })
-        subjectOnlyIds = assignments.map(item => item.subjectId)
-        if (subjectId && !subjectOnlyIds.includes(subjectId)) {
-          return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
-        }
-        if (subjectOnlyIds.length === 0) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
-      }
+      const assignments = teacher ? await db.teacherSubject.findMany({ where: { teacherId: teacher.id, classId, subject: { schoolId: actor.schoolId || '' } }, select: { subjectId: true } }) : []
+      subjectOnlyIds = assignments.map(item => item.subjectId)
+      if (subjectId && !subjectOnlyIds.includes(subjectId)) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
+      if (subjectOnlyIds.length === 0) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
     }
 
     // Get the class to determine school type
@@ -115,11 +143,12 @@ export async function GET(request: NextRequest) {
     if (subjectId) {
       // Filter by subject via classSubject
       const classSubject = await db.classSubject.findFirst({
-        where: { classId, subjectId },
+        where: { classId, subjectId, subject: { schoolId: actor.schoolId || undefined } },
       });
       if (!classSubject) {
         return NextResponse.json({ error: 'The selected subject is not assigned to this class' }, { status: 400 });
       }
+      if (actor.role === 'TEACHER' && (!subjectOnlyIds || !subjectOnlyIds.includes(subjectId))) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
       where.classSubjectId = classSubject.id;
     } else {
       // Filter by class via classSubject
@@ -128,6 +157,7 @@ export async function GET(request: NextRequest) {
         .map(cs => cs.id);
       where.classSubjectId = { in: classSubjectIds };
     }
+    where.student = { classId, schoolId: actor.schoolId || undefined }
 
     const marks = await db.marksEntry.findMany({
       where,
@@ -144,7 +174,7 @@ export async function GET(request: NextRequest) {
 
     // Get students in the class (for showing students without marks too)
     const students = await db.student.findMany({
-      where: { classId, status: 'ACTIVE' },
+      where: { classId, schoolId: actor.schoolId || undefined, status: 'ACTIVE' },
       orderBy: { fullName: 'asc' },
     });
 
@@ -195,29 +225,24 @@ export async function POST(request: NextRequest) {
       }
     }
     if (actor.role === 'TEACHER' && body.classSubjectId) {
-      const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-      const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE' }, select: { id: true } }) : null
-      if (!classTeacher) {
-        const classSubject = await db.classSubject.findUnique({ where: { id: body.classSubjectId }, select: { subjectId: true, classId: true } })
-        const subjectAccess = teacher && classSubject ? await db.teacherSubject.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, subjectId: classSubject.subjectId } }) : null
-        if (!subjectAccess || classSubject?.classId !== targetClassId) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
-      }
+      const classSubject = await db.classSubject.findUnique({ where: { id: body.classSubjectId }, select: { subjectId: true, classId: true } })
+      if (!classSubject || classSubject.classId !== targetClassId || !(await canAccessTeacherSubject(actor, targetClassId, classSubject.subjectId))) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
     }
 
     if (action === 'bulk-save') {
-      return await handleBulkSave(body, actor);
+      return await handleBulkSave(body, actor, request.headers.get('x-shulea-operation-id'));
     }
 
     if (action === 'compute-results') {
       if (actor.role === 'TEACHER') {
         const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-        const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: body.classId, status: 'ACTIVE' }, select: { id: true } }) : null
+        const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: body.classId, schoolId: actor.schoolId || '', status: 'ACTIVE' }, select: { id: true } }) : null
         if (!classTeacher) return NextResponse.json({ error: 'Only the class teacher or school administrator can compute class results' }, { status: 403 })
       }
       return await handleComputeResults(body);
     }
 
-    return await handleSaveMark(body);
+    return await handleSaveMark(body, actor, request.headers.get('x-shulea-operation-id'));
   } catch (error) {
     console.error('Error saving marks:', error);
     return NextResponse.json({ error: 'Failed to save marks' }, { status: 500 });
@@ -231,7 +256,9 @@ async function handleSaveMark(body: {
   marks?: number | null;
   grade?: string;
   remarks?: string;
-}) {
+  baseVersion?: number;
+  baseUpdatedAt?: string | null;
+}, actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>, operationId?: string | null) {
   const { studentId, classSubjectId, examId, marks, grade, remarks } = body;
 
   if (!studentId || !classSubjectId || !examId) {
@@ -241,20 +268,20 @@ async function handleSaveMark(body: {
     );
   }
 
+  const authorization = await authorizeMarkMutation(actor, { studentId, classSubjectId, examId })
+  if (!authorization.ok) return NextResponse.json({ error: authorization.error }, { status: authorization.status })
+  const classSubject = authorization.classSubject
+  const versionConflict = await checkMarkVersionConflict({ schoolId: actor.schoolId!, operationId, baseVersion: body.baseVersion, baseUpdatedAt: body.baseUpdatedAt, clientMark: body as Record<string, unknown>, serverMark: authorization.existing })
+  if (versionConflict) return NextResponse.json({ error: 'Mark changed on the server after this device snapshot', code: 'MARK_VERSION_CONFLICT', operationId, conflict: versionConflict }, { status: 409 })
+
   // Validate mark range
   if (marks !== undefined && marks !== null) {
-    const classSubject = await db.classSubject.findUnique({
-      where: { id: classSubjectId },
-      include: { class: { select: { schoolType: true } } },
-    });
-    if (classSubject) {
-      const maxMarks = classSubject.class.schoolType === 'PRIMARY' ? 50 : 100;
-      if (marks < 0 || marks > maxMarks) {
-        return NextResponse.json(
-          { error: `Invalid mark. ${classSubject.class.schoolType === 'PRIMARY' ? 'Primary' : 'Secondary'} school marks must be between 0 and ${maxMarks}.` },
-          { status: 400 }
-        );
-      }
+    const maxMarks = classSubject.class.schoolType === 'PRIMARY' ? 50 : 100;
+    if (marks < 0 || marks > maxMarks) {
+      return NextResponse.json(
+        { error: `Invalid mark. ${classSubject.class.schoolType === 'PRIMARY' ? 'Primary' : 'Secondary'} school marks must be between 0 and ${maxMarks}.` },
+        { status: 400 }
+      );
     }
   }
 
@@ -263,14 +290,8 @@ async function handleSaveMark(body: {
   let computedRemarks = remarks;
 
   if (marks !== undefined && marks !== null && !grade) {
-    const classSubject = await db.classSubject.findUnique({
-      where: { id: classSubjectId },
-      include: { class: { select: { schoolType: true } } },
-    });
-    if (classSubject) {
-      computedGrade = getGrade(marks, classSubject.class.schoolType);
-      computedRemarks = getRemarks(computedGrade);
-    }
+    computedGrade = getGrade(marks, classSubject.class.schoolType);
+    computedRemarks = getRemarks(computedGrade);
   }
 
   // Upsert: create or update the mark
@@ -289,6 +310,7 @@ async function handleSaveMark(body: {
       marks: marks ?? null,
       grade: computedGrade || null,
       remarks: computedRemarks || null,
+      recordedByUserId: actor.role === 'TEACHER' ? actor.id : null,
     },
     update: {
       marks: marks !== undefined ? marks : undefined,
@@ -296,7 +318,7 @@ async function handleSaveMark(body: {
       remarks: computedRemarks !== undefined ? computedRemarks : undefined,
     },
   });
-
+  await recordMarkSyncChanges([{ ...mark, schoolId: actor.schoolId! }], operationId)
   return NextResponse.json({
     message: 'Mark saved successfully',
     mark,
@@ -309,9 +331,11 @@ async function handleBulkSave(body: {
     classSubjectId: string;
     examId: string;
     marks?: number | null;
+    baseVersion?: number;
+    baseUpdatedAt?: string | null;
   }>;
   classId: string;
-}, actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
+}, actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>, operationId?: string | null) {
   const { marks, classId } = body;
 
   if (!marks || !Array.isArray(marks) || marks.length === 0) {
@@ -329,18 +353,11 @@ async function handleBulkSave(body: {
   }
 
   for (const markEntry of marks) {
-    const classSubject = await db.classSubject.findUnique({ where: { id: markEntry.classSubjectId }, select: { classId: true } })
-    const student = await db.student.findUnique({ where: { id: markEntry.studentId }, select: { classId: true } })
-    if (classSubject?.classId !== classId || student?.classId !== classId) {
-      return NextResponse.json({ error: 'Mark does not belong to the selected class' }, { status: 400 })
-    }
-    if (actor.role === 'TEACHER') {
-      const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-      const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId, status: 'ACTIVE' }, select: { id: true } }) : null
-      if (!classTeacher) {
-        const assignment = teacher ? await db.teacherSubject.findFirst({ where: { teacherId: teacher.id, classId, subjectId: (await db.classSubject.findUnique({ where: { id: markEntry.classSubjectId }, select: { subjectId: true } }))?.subjectId } }) : null
-        if (!assignment) return NextResponse.json({ error: 'Teacher is not authorized for one or more selected subjects' }, { status: 403 })
-      }
+    const authorization = await authorizeMarkMutation(actor, { classId, studentId: markEntry.studentId, classSubjectId: markEntry.classSubjectId, examId: markEntry.examId })
+    if (!authorization.ok) return NextResponse.json({ error: authorization.error }, { status: authorization.status })
+    if (markEntry.baseVersion !== undefined) {
+      const conflict = await checkMarkVersionConflict({ schoolId: actor.schoolId!, operationId, baseVersion: markEntry.baseVersion, baseUpdatedAt: markEntry.baseUpdatedAt, clientMark: markEntry as unknown as Record<string, unknown>, serverMark: authorization.existing })
+      if (conflict) return NextResponse.json({ error: 'Mark changed on the server after this device snapshot', code: 'MARK_VERSION_CONFLICT', operationId, conflict }, { status: 409 })
     }
   }
 
@@ -375,6 +392,7 @@ async function handleBulkSave(body: {
           marks: markEntry.marks ?? null,
           grade,
           remarks,
+          recordedByUserId: actor.role === 'TEACHER' ? actor.id : null,
         },
         update: {
           marks: markEntry.marks !== undefined ? markEntry.marks : undefined,
@@ -384,6 +402,7 @@ async function handleBulkSave(body: {
       });
     })
   );
+  await recordMarkSyncChanges(results.map(result => ({ ...result, schoolId: actor.schoolId! })), operationId)
 
   return NextResponse.json({
     message: `${results.length} marks saved successfully`,

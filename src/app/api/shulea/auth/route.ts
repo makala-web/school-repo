@@ -580,61 +580,31 @@ async function handleRegisterWithInvitation(body: {
 
     let assignedClassIds: string[] = []
     let assignedSubjectIds: string[] = []
+    let assignedPairs: Array<{ classId: string; subjectId: string }> = []
     try {
       const parsedClasses = JSON.parse(invitation.assignedClasses || '[]')
       const parsedSubjects = JSON.parse(invitation.assignedSubjects || '[]')
       assignedClassIds = Array.isArray(parsedClasses) ? parsedClasses.filter(item => typeof item === 'string') : []
       assignedSubjectIds = Array.isArray(parsedSubjects) ? parsedSubjects.filter(item => typeof item === 'string') : []
+      const parsedPairs = JSON.parse(invitation.assignedTeacherSubjects || '[]')
+      if (Array.isArray(parsedPairs)) assignedPairs = parsedPairs.filter(item => item && typeof item.classId === 'string' && typeof item.subjectId === 'string')
     } catch {
       assignedClassIds = []
       assignedSubjectIds = []
+      assignedPairs = []
     }
 
-    const [assignedClasses, assignedSubjects] = await Promise.all([
-      db.class.findMany({ where: { id: { in: assignedClassIds }, schoolId: invitation.schoolId }, select: { id: true } }),
-      db.subject.findMany({ where: { id: { in: assignedSubjectIds }, schoolId: invitation.schoolId }, select: { id: true } }),
-    ])
-    await Promise.all(
-      assignedClasses.flatMap(classRecord => assignedSubjects.map(subject =>
-        db.teacherSubject.upsert({
-          where: { teacherId_subjectId_classId: { teacherId: teacher.id, subjectId: subject.id, classId: classRecord.id } },
-          update: {},
-          create: { teacherId: teacher.id, subjectId: subject.id, classId: classRecord.id },
-        })
-      ))
-    )
-
-    // A class selected by the school administrator is also registered as a
-    // class-teacher responsibility when the invitation is accepted. Never
-    // replace an existing active assignment for the same class/year.
-    await Promise.all(assignedClasses.map(async (classRecord) => {
-      const classInfo = await db.class.findUnique({
-        where: { id: classRecord.id },
-        select: { academicYear: true },
-      })
-      const academicYear = classInfo?.academicYear || String(new Date().getFullYear())
-      const existingAssignment = await db.classTeacherAssignment.findFirst({
-        where: {
-          schoolId: invitation.schoolId,
-          classId: classRecord.id,
-          academicYear,
-          status: 'ACTIVE',
-        },
-        select: { id: true },
-      })
-      if (!existingAssignment) {
-        await db.classTeacherAssignment.create({
-          data: {
-            schoolId: invitation.schoolId,
-            classId: classRecord.id,
-            teacherId: teacher.id,
-            academicYear,
-            startDate: now.toISOString().slice(0, 10),
-            status: 'ACTIVE',
-          },
-        })
-      }
-    }))
+    if (!assignedPairs.length) {
+      // Compatibility for invitations created before class-specific mapping.
+      assignedPairs = assignedClassIds.flatMap(classId => assignedSubjectIds.map(subjectId => ({ classId, subjectId })))
+    }
+    const validPairs = assignedPairs.length
+      ? await db.classSubject.findMany({ where: { OR: assignedPairs.map(item => ({ classId: item.classId, subjectId: item.subjectId, class: { schoolId: invitation.schoolId }, subject: { schoolId: invitation.schoolId } })) }, select: { classId: true, subjectId: true } })
+      : []
+    await db.teacherSubject.createMany({
+      data: validPairs.map(item => ({ teacherId: teacher.id, classId: item.classId, subjectId: item.subjectId })),
+      skipDuplicates: true,
+    })
   }
 
   // Update invitation status

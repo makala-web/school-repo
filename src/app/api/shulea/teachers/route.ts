@@ -13,8 +13,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
-    const where: Record<string, unknown> = {};
-    if (schoolId) where.schoolId = schoolId;
+    const where: Record<string, unknown> = { schoolId };
+    if (actor.role === 'TEACHER') where.userId = actor.id;
 
     const teachers = await db.teacher.findMany({
       where,
@@ -121,6 +121,45 @@ async function handleCreateTeacher(body: {
   }, { status: 201 });
 }
 
+async function recordTeacherSubjectChange(schoolId: string, assignment: { id: string; teacherId: string; classId: string; subjectId: string }, action: 'UPSERT' | 'DELETE') {
+  await db.$transaction(async tx => {
+    const targets: Array<{ entityType: string; entityId: string; action: 'UPSERT' | 'DELETE'; payload: string | null }> = []
+    if (action === 'UPSERT') {
+      const classRecord = await tx.class.findFirst({ where: { id: assignment.classId, schoolId }, include: { subjects: true } })
+      const subject = await tx.subject.findFirst({ where: { id: assignment.subjectId, schoolId } })
+      const classSubject = await tx.classSubject.findUnique({ where: { classId_subjectId: { classId: assignment.classId, subjectId: assignment.subjectId } } })
+      const [students, exams] = await Promise.all([
+        tx.student.findMany({ where: { classId: assignment.classId, schoolId } }),
+        tx.exam.findMany({ where: { classId: assignment.classId, schoolId } }),
+      ])
+      if (classRecord) targets.push({ entityType: 'CLASS', entityId: classRecord.id, action: 'UPSERT', payload: JSON.stringify(classRecord) })
+      if (subject) targets.push({ entityType: 'SUBJECT', entityId: subject.id, action: 'UPSERT', payload: JSON.stringify(subject) })
+      if (classSubject) targets.push({ entityType: 'CLASS_SUBJECT', entityId: classSubject.id, action: 'UPSERT', payload: JSON.stringify(classSubject) })
+      targets.push(...students.map(item => ({ entityType: 'STUDENT', entityId: item.id, action: 'UPSERT' as const, payload: JSON.stringify(item) })))
+      targets.push(...exams.map(item => ({ entityType: 'EXAM', entityId: item.id, action: 'UPSERT' as const, payload: JSON.stringify(item) })))
+      if (classSubject && students.length && exams.length) {
+        const marks = await tx.marksEntry.findMany({ where: { classSubjectId: classSubject.id, studentId: { in: students.map(item => item.id) }, examId: { in: exams.map(item => item.id) } } })
+        targets.push(...marks.map(item => ({ entityType: 'MARK', entityId: item.id, action: 'UPSERT' as const, payload: JSON.stringify(item) })))
+      }
+    }
+    targets.push({ entityType: 'TEACHER_SUBJECT', entityId: assignment.id, action, payload: JSON.stringify(assignment) })
+    for (const target of targets) {
+      const previous = await tx.syncChange.findFirst({ where: { schoolId, entityType: target.entityType, entityId: target.entityId }, orderBy: { sequence: 'desc' }, select: { version: true } })
+      const sequence = await tx.syncSequence.upsert({ where: { schoolId }, create: { schoolId, nextSequence: 1 }, update: { nextSequence: { increment: 1 } } })
+      await tx.syncChange.create({ data: {
+        schoolId,
+        sequence: sequence.nextSequence,
+        entityType: target.entityType,
+        entityId: target.entityId,
+        action: target.action,
+        version: (previous?.version || 0) + 1,
+        payload: target.payload,
+        deletedAt: target.action === 'DELETE' ? new Date() : null,
+      } })
+    }
+  }, { timeout: 30_000 })
+}
+
 async function handleAssignSubject(body: {
   teacherId: string;
   subjectId: string;
@@ -134,6 +173,9 @@ async function handleAssignSubject(body: {
       { status: 400 }
     );
   }
+
+  const offered = await db.classSubject.findUnique({ where: { classId_subjectId: { classId, subjectId } }, select: { id: true } })
+  if (!offered) return NextResponse.json({ error: 'Subject is not assigned to the selected class' }, { status: 400 })
 
   // Check if assignment already exists
   const existing = await db.teacherSubject.findUnique({
@@ -161,6 +203,8 @@ async function handleAssignSubject(body: {
       class: { select: { fullName: true } },
     },
   });
+  const schoolId = (await db.teacher.findUnique({ where: { id: teacherId }, select: { schoolId: true } }))?.schoolId
+  if (schoolId) await recordTeacherSubjectChange(schoolId, assignment, 'UPSERT')
 
   return NextResponse.json({
     message: 'Teacher assigned to subject successfully',
@@ -194,6 +238,7 @@ async function handleRemoveAssignment(body: {
   if (!teacher || teacher.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Assignment access denied' }, { status: 403 })
 
   await db.teacherSubject.delete({ where: { id: assignmentId } });
+  await recordTeacherSubjectChange(teacher.schoolId, existing, 'DELETE')
 
   return NextResponse.json({
     message: 'Assignment removed successfully',
@@ -258,6 +303,7 @@ async function handleUpdateAssignment(body: {
       class: { select: { name: true, fullName: true } },
     },
   });
+  await recordTeacherSubjectChange(teacher.schoolId, assignment, 'UPSERT')
 
   return NextResponse.json({
     message: 'Assignment updated successfully',

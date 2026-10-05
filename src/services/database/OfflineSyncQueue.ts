@@ -15,13 +15,15 @@ export interface OfflineMutation {
   nextAttemptAt?: string
   lastError?: string
   baseVersion?: number
-  status: 'PENDING' | 'SYNCING' | 'FAILED' | 'DEAD_LETTER'
+  status: 'PENDING' | 'SYNCING' | 'FAILED' | 'DEAD_LETTER' | 'CONFLICT'
+  conflict?: unknown
 }
 
 export interface OfflineSyncStatus {
   pending: number
   failed: number
   deadLetter: number
+  conflicts: number
   nextRetryAt: string | null
   lastError: string | null
 }
@@ -211,7 +213,7 @@ async function flushOfflineMutationsOnce(scope: { userId?: string | null; school
   if (typeof window === 'undefined' || navigator.onLine === false || !scope.userId || !scope.schoolId) return { synced: 0, pending: 0 }
   const queued = sortQueuedMutations((await readQueue())
     .filter(item => item.userId === scope.userId && item.schoolId === scope.schoolId)
-    .filter(item => item.status !== 'DEAD_LETTER'))
+    .filter(item => item.status !== 'DEAD_LETTER' && item.status !== 'CONFLICT'))
   let synced = 0
 
   for (const item of queued) {
@@ -248,7 +250,15 @@ async function flushOfflineMutationsOnce(scope: { userId?: string | null; school
         await removeMutation(item.id!)
         synced++
       } else {
-        item.lastError = `Sync rejected (${response.status})`
+        const responseText = await response.text().catch(() => '')
+        item.lastError = `Sync rejected (${response.status})${responseText ? `: ${responseText.slice(0, 400)}` : ''}`
+        if (response.status === 409) {
+          try { item.conflict = JSON.parse(responseText) } catch { item.conflict = responseText }
+          item.status = 'CONFLICT'
+          item.nextAttemptAt = undefined
+          await updateMutation(item)
+          continue
+        }
         if (isPermanentFailure(response.status) || item.attempts >= MAX_RETRY_ATTEMPTS) {
           item.status = 'DEAD_LETTER'
           item.nextAttemptAt = undefined
@@ -293,7 +303,7 @@ export async function getPendingOfflineMutationCount(scope: { userId?: string | 
 
 export async function getOfflineSyncStatus(scope: { userId?: string | null; schoolId?: string | null }): Promise<OfflineSyncStatus> {
   if (typeof window === 'undefined' || !scope.userId || !scope.schoolId) {
-    return { pending: 0, failed: 0, deadLetter: 0, nextRetryAt: null, lastError: null }
+    return { pending: 0, failed: 0, deadLetter: 0, conflicts: 0, nextRetryAt: null, lastError: null }
   }
   const queued = (await readQueue()).filter(item => item.userId === scope.userId && item.schoolId === scope.schoolId)
   const retryTimes = queued.map(item => item.nextAttemptAt).filter(Boolean).sort()
@@ -301,6 +311,7 @@ export async function getOfflineSyncStatus(scope: { userId?: string | null; scho
     pending: queued.length,
     failed: queued.filter(item => item.status === 'FAILED').length,
     deadLetter: queued.filter(item => item.status === 'DEAD_LETTER').length,
+    conflicts: queued.filter(item => item.status === 'CONFLICT').length,
     nextRetryAt: retryTimes[0] || null,
     lastError: queued.find(item => item.lastError)?.lastError || null,
   }

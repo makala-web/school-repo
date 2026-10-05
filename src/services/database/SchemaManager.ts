@@ -15,6 +15,7 @@ export class SchemaManager {
       )
 
       await this.ensureColumn('User', 'schoolType', 'TEXT')
+      await this.ensureColumn('MarksEntry', 'recordedByUserId', 'TEXT')
 
       // Index creation is also persisted once. IF NOT EXISTS keeps this safe
       // across refreshes and upgrades of an existing local database.
