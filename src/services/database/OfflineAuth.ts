@@ -78,12 +78,13 @@ export async function verifyOfflinePassword(password: string, verifier: string) 
 }
 
 async function prepareLocalScope(user: OfflineUser) {
-  if (!user.id || !user.schoolId) throw new Error('Offline login requires a school-scoped user.')
+  const schoolId = user.schoolId || user.school?.id
+  if (!user.id || !schoolId) throw new Error('Offline login requires a school-scoped user.')
   ConnectionManager.setMode('sqlite')
   await ConnectionManager.getSQLite()
   await SchemaManager.initialize()
 
-  const expected = `${user.id}:${user.schoolId}`
+  const expected = `${user.id}:${schoolId}`
   const current = await ConnectionManager.query<{ value: string }>(
     'SELECT value FROM AppSetting WHERE key = ? LIMIT 1',
     [LOCAL_SCOPE_KEY],

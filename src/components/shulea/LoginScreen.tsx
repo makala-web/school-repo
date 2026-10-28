@@ -117,8 +117,9 @@ export default function LoginScreen() {
         }),
       })
 
-      if ((typeof navigator === 'undefined' || navigator.onLine) && data.user.schoolId) {
-        await provisionOfflineLogin(data.user, loginPassword)
+      const schoolId = data.user.schoolId || data.user.school?.id
+      if ((typeof navigator === 'undefined' || navigator.onLine) && schoolId) {
+        await provisionOfflineLogin({ ...data.user, schoolId }, loginPassword)
       }
 
       // Login and redirect to dashboard - login() will handle schoolType properly
