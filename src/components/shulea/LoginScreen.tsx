@@ -117,7 +117,7 @@ export default function LoginScreen() {
         }),
       })
 
-      if (typeof navigator === 'undefined' || navigator.onLine) {
+      if ((typeof navigator === 'undefined' || navigator.onLine) && data.user.schoolId) {
         await provisionOfflineLogin(data.user, loginPassword)
       }
 
