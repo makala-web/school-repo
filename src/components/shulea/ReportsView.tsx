@@ -322,10 +322,14 @@ export default function ReportsView() {
 
   // Filter exams and classes by current school type - memoized
   const modeClasses = useMemo(() => classes.filter(c => c.schoolType === schoolType), [classes, schoolType])
-  const modeExams = useMemo(() => exams.filter(e => {
-    const examClass = e.class || classes.find(c => c.id === (e as unknown as { classId?: string }).classId)
-    return examClass?.schoolType === schoolType
-  }), [exams, classes, schoolType])
+  const modeExams = useMemo(() => {
+    const visibleClassIds = new Set(classes.filter(cls => cls.schoolType === schoolType).map(cls => cls.id))
+    return exams.filter(exam => {
+      const examClassId = exam.class?.id || exam.classId || ''
+      const examSchoolType = exam.class?.schoolType || classes.find(cls => cls.id === examClassId)?.schoolType
+      return visibleClassIds.has(examClassId) && examSchoolType === schoolType
+    })
+  }, [exams, classes, schoolType])
 
   const getExamClassId = useCallback((examId = selectedExam) => {
     const exam = exams.find(e => e.id === examId)
@@ -343,7 +347,9 @@ export default function ReportsView() {
   async function loadData() {
     try {
       const [examData, classData, schoolData] = await Promise.all([
-        apiCall(`/api/shulea/exams?schoolId=${currentSchool?.id || ''}`),
+        currentUser?.role === 'TEACHER'
+          ? Promise.resolve({ exams: [] })
+          : apiCall(`/api/shulea/exams?schoolId=${currentSchool?.id || ''}`),
         apiCall(`/api/shulea/classes?schoolId=${currentSchool?.id || ''}`),
         apiCall(`/api/shulea/school?schoolId=${currentSchool?.id || ''}`),
       ])
@@ -2550,6 +2556,13 @@ export default function ReportsView() {
                     ))}
                   </SelectContent>
                 </Select>
+                {modeExams.length === 0 && (
+                  <p className="text-xs text-amber-700">
+                    {currentUser?.role === 'TEACHER'
+                      ? 'No exams found for your assigned classes. Confirm the exam is assigned to your class and sync the latest school data.'
+                      : 'No exams found for this school type.'}
+                  </p>
+                )}
               </div>
               <div className="space-y-2 xl:col-span-2 min-w-0">
                 <Label className="text-sm font-medium">Class</Label>
