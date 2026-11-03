@@ -368,6 +368,81 @@
 }
 
 /* Keep report pages comfortable to inspect on desktop and mobile. */
+.reports-page,
+.reports-page .reports-tabs,
+.reports-page .reports-content-scroll {
+  min-width: 0;
+}
+
+.reports-page [role="tabpanel"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.reports-page [data-slot="card"] {
+  border-color: #e2e8f0;
+  border-radius: 1rem;
+}
+
+.reports-page .reports-filter-card [data-slot="label"] {
+  color: #334155;
+  font-weight: 600;
+}
+
+.reports-page .reports-context-card {
+  background: linear-gradient(115deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.reports-page .reports-context-card p,
+.reports-page .reports-context-card h2 {
+  overflow-wrap: anywhere;
+}
+
+.reports-page .reports-tab-list [data-state="active"] {
+  color: #065f46;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 12%);
+}
+
+.reports-page .reports-content-scroll {
+  overflow: visible;
+}
+
+.reports-page .report-preview-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.reports-page .report-metric-card {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.reports-page .report-metric-card:hover {
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
+  transform: translateY(-1px);
+}
+
+.reports-page .no-mobile-cards th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+  color: #334155;
+  font-weight: 700;
+}
+
+.reports-page .no-mobile-cards tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.subject-report-dialog {
+  width: min(96vw, 72rem);
+}
+
 .reports-content-scroll {
   scrollbar-width: auto;
   scrollbar-color: #94a3b8 #f1f5f9;
@@ -567,6 +642,63 @@
 
   .report-mobile-paper {
     min-width: 680px;
+  }
+
+  .reports-page .report-mobile-paper {
+    width: 100%;
+    min-width: 0;
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    font-size: 13px !important;
+  }
+
+  .reports-page .report-mobile-paper .student-info-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reports-page .report-mobile-paper .student-info-item {
+    min-width: 0;
+    border-right-width: 0;
+  }
+
+  .reports-page .report-mobile-paper .student-info-value,
+  .reports-page .report-mobile-paper .subject-cell,
+  .reports-page .report-mobile-paper .remarks-cell {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .reports-page .report-mobile-paper .student-info-label,
+  .reports-page .report-mobile-paper .summary-label,
+  .reports-page .report-mobile-paper .comment-label,
+  .reports-page .report-mobile-paper .signature-label,
+  .reports-page .report-mobile-paper .parent-field-label {
+    font-size: 10px;
+  }
+
+  .reports-page .report-preview-scroll {
+    margin-inline: 0;
+    padding-inline: 0;
+  }
+
+  .reports-page .report-info-ribbon > div {
+    overflow-wrap: anywhere;
+  }
+
+  .reports-page .report-preview-scroll .no-mobile-cards {
+    font-size: 0.75rem;
+  }
+
+  .reports-page .reports-context-card > div {
+    gap: 0.75rem;
+  }
+
+  .subject-report-dialog [data-slot="dialog-footer"] > button {
+    min-height: 2.75rem;
+  }
+
+  .subject-report-dialog {
+    width: calc(100vw - 1rem);
   }
 
   .reports-content-scroll {

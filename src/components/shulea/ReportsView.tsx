@@ -14,7 +14,8 @@ import { toast } from 'sonner'
 import { getPrivateTeacherMarkDrafts } from '@/services/database/OfflineSyncQueue'
 import {
   Loader2, Printer, BarChart3, Trophy, TrendingDown, FileText, Languages, Calendar, Save,
-  Users, BookOpen, Download, Share2, FileSpreadsheet, Eye
+  Users, BookOpen, Download, Share2, FileSpreadsheet, Eye, School,
+  CircleCheck, UsersRound
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -1275,30 +1276,30 @@ export default function ReportsView() {
           </Button>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="shadow-sm">
-            <CardContent className="p-5 text-center sm:p-4">
-              <p className="text-2xl font-bold text-emerald-600">{summary.totalStudents}</p>
-              <p className="text-xs text-muted-foreground">Total Students</p>
+          <Card className="report-metric-card border-emerald-100 shadow-sm">
+            <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+              <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Users className="h-5 w-5" /></div>
+              <div><p className="text-2xl font-bold text-slate-900">{summary.totalStudents}</p><p className="text-xs font-medium text-slate-500">Total Students</p></div>
             </CardContent>
           </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-5 text-center sm:p-4">
-              <p className="text-2xl font-bold text-blue-600">{summary.classAverage}</p>
-              <p className="text-xs text-muted-foreground">Class Average</p>
+          <Card className="report-metric-card border-blue-100 shadow-sm">
+            <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+              <div className="rounded-xl bg-blue-50 p-3 text-blue-700"><BarChart3 className="h-5 w-5" /></div>
+              <div><p className="text-2xl font-bold text-slate-900">{summary.classAverage}</p><p className="text-xs font-medium text-slate-500">Class Average</p></div>
             </CardContent>
           </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-5 text-center sm:p-4">
-              <p className="text-2xl font-bold text-green-600">{summary.passRate}%</p>
-              <p className="text-xs text-muted-foreground">Pass Rate</p>
+          <Card className="report-metric-card border-teal-100 shadow-sm">
+            <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+              <div className="rounded-xl bg-teal-50 p-3 text-teal-700"><CircleCheck className="h-5 w-5" /></div>
+              <div><p className="text-2xl font-bold text-slate-900">{summary.passRate}%</p><p className="text-xs font-medium text-slate-500">Pass Rate</p></div>
             </CardContent>
           </Card>
-          <Card className="shadow-sm">
-            <CardContent className="p-5 text-center sm:p-4">
-              <p className="text-2xl font-bold text-purple-600">
+          <Card className="report-metric-card border-violet-100 shadow-sm">
+            <CardContent className="flex items-center gap-4 p-4 sm:p-5">
+              <div className="rounded-xl bg-violet-50 p-3 text-violet-700"><UsersRound className="h-5 w-5" /></div>
+              <div><p className="text-2xl font-bold text-slate-900">
                 {summary.genderBreakdown.male}M / {summary.genderBreakdown.female}F
-              </p>
-              <p className="text-xs text-muted-foreground">Gender Split</p>
+              </p><p className="text-xs font-medium text-slate-500">Gender Breakdown</p></div>
             </CardContent>
           </Card>
         </div>
@@ -1342,13 +1343,13 @@ export default function ReportsView() {
         </Card>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Card className="shadow-sm">
+          <Card className="border-emerald-100 shadow-sm">
             <CardContent className="p-5 text-center sm:p-4">
               <p className="text-2xl font-bold text-green-600">{summary.highestScore}</p>
               <p className="text-xs text-muted-foreground">Highest Average</p>
             </CardContent>
           </Card>
-          <Card className="shadow-sm">
+          <Card className="border-rose-100 shadow-sm">
             <CardContent className="p-5 text-center sm:p-4">
               <p className="text-2xl font-bold text-red-600">{summary.lowestScore}</p>
               <p className="text-xs text-muted-foreground">Lowest Average</p>
@@ -1438,8 +1439,8 @@ export default function ReportsView() {
 
         <Card className="shadow-sm">
           <CardContent className="p-0">
-            <div className="report-preview-scroll max-w-full" id="overall-wide-table">
-              <table className="w-full border-collapse text-[10px] no-mobile-cards" style={{ minWidth: `${overallSubjects.length * 68 + 430}px` }}>
+              <div className="report-preview-scroll max-w-full" id="overall-wide-table">
+            <table className="w-full border-collapse text-xs no-mobile-cards sm:text-sm" style={{ minWidth: `${overallSubjects.length * 76 + 440}px` }}>
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-100">
                     <th className="border border-gray-400 px-1 py-1 text-center w-8">{t('sn')}</th>
@@ -1447,7 +1448,7 @@ export default function ReportsView() {
                     <th className="border border-gray-400 px-1 py-1 text-center w-8">{t('sex')}</th>
                     {overallSubjects.map(subj => (
                       <th key={subj.id} className="border border-gray-400 px-0.5 py-1 text-center min-w-[50px]">
-                        <div className="text-[8px] leading-tight">{subj.shortName || subj.name}</div>
+                        <div className="text-[10px] leading-tight sm:text-xs">{subj.shortName || subj.name}</div>
                       </th>
                     ))}
                     <th className="border border-gray-400 px-1 py-1 text-center w-14 bg-blue-50">{t('average')}</th>
@@ -1580,7 +1581,7 @@ export default function ReportsView() {
           </Button>
         </div>
         <div id="top-bottom-content" className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          <Card className="shadow-sm">
+          <Card className="border-emerald-100 shadow-sm">
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
                 <Trophy className="w-4 h-4 text-amber-500" />
@@ -1595,7 +1596,7 @@ export default function ReportsView() {
                     <TableHead>Name</TableHead>
                     <TableHead className="text-center">Average</TableHead>
                     <TableHead className="text-center">Grade</TableHead>
-                    {schoolType === 'SECONDARY' && <TableHead className="text-center">Div</TableHead>}
+                    {schoolType === 'SECONDARY' && <><TableHead className="text-center">Points</TableHead><TableHead className="text-center">Division</TableHead></>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1605,12 +1606,12 @@ export default function ReportsView() {
                       <TableCell className="font-medium" data-label="Name">{s.student.fullName}</TableCell>
                       <TableCell className="text-center" data-label="Average">{s.averageMarks != null ? Math.round(s.averageMarks * 100) / 100 : '-'}</TableCell>
                       <TableCell className="text-center" data-label="Grade">{s.grade ? <GradeBadge grade={s.grade} /> : '-'}</TableCell>
-                      {schoolType === 'SECONDARY' && <TableCell className="text-center" data-label="Div">{s.division || '-'}</TableCell>}
+                      {schoolType === 'SECONDARY' && <><TableCell className="text-center" data-label="Points">{s.points ?? '-'}</TableCell><TableCell className="text-center" data-label="Division">{s.division || '-'}</TableCell></>}
                     </TableRow>
                   ))}
                   {safeTopStudents.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={schoolType === 'SECONDARY' ? 5 : 4} className="text-center py-6 text-muted-foreground">No data</TableCell>
+                      <TableCell colSpan={schoolType === 'SECONDARY' ? 6 : 4} className="text-center py-6 text-muted-foreground">No data</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -1618,7 +1619,7 @@ export default function ReportsView() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm">
+          <Card className="border-rose-100 shadow-sm">
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
                 <TrendingDown className="w-4 h-4 text-red-500" />
@@ -1633,7 +1634,7 @@ export default function ReportsView() {
                     <TableHead>Name</TableHead>
                     <TableHead className="text-center">Average</TableHead>
                     <TableHead className="text-center">Grade</TableHead>
-                    {schoolType === 'SECONDARY' && <TableHead className="text-center">Div</TableHead>}
+                    {schoolType === 'SECONDARY' && <><TableHead className="text-center">Points</TableHead><TableHead className="text-center">Division</TableHead></>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1643,12 +1644,12 @@ export default function ReportsView() {
                       <TableCell className="font-medium" data-label="Name">{s.student.fullName}</TableCell>
                       <TableCell className="text-center" data-label="Average">{s.averageMarks != null ? Math.round(s.averageMarks * 100) / 100 : '-'}</TableCell>
                       <TableCell className="text-center" data-label="Grade">{s.grade ? <GradeBadge grade={s.grade} /> : '-'}</TableCell>
-                      {schoolType === 'SECONDARY' && <TableCell className="text-center" data-label="Div">{s.division || '-'}</TableCell>}
+                      {schoolType === 'SECONDARY' && <><TableCell className="text-center" data-label="Points">{s.points ?? '-'}</TableCell><TableCell className="text-center" data-label="Division">{s.division || '-'}</TableCell></>}
                     </TableRow>
                   ))}
                   {safeBottomStudents.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={schoolType === 'SECONDARY' ? 5 : 4} className="text-center py-6 text-muted-foreground">No data</TableCell>
+                      <TableCell colSpan={schoolType === 'SECONDARY' ? 6 : 4} className="text-center py-6 text-muted-foreground">No data</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -1763,7 +1764,7 @@ export default function ReportsView() {
                   return (
                     <div key={idx} className="flex items-center gap-3">
                       <span className="text-xs font-medium w-28 truncate">{s.shortName || s.subjectName}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-6 relative">
+                      <div className="relative h-6 flex-1 rounded-full bg-slate-100" role="progressbar" aria-label={`${s.subjectName} average`} aria-valuemin={0} aria-valuemax={maxAvg} aria-valuenow={Math.min(maxAvg, Math.max(0, s.average))}>
                         <div
                           className="h-6 rounded-full transition-all flex items-center justify-end pr-2"
                           style={{
@@ -2339,7 +2340,7 @@ export default function ReportsView() {
 
     return (
       <Dialog open={subjectReportOpen} onOpenChange={setSubjectReportOpen}>
-        <DialogContent className="top-[50%] max-h-[90dvh] w-[95vw] max-w-2xl translate-y-[-50%] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-lg p-4 pt-[max(1rem,env(safe-area-inset-top))] sm:max-h-[90vh] sm:p-6">
+      <DialogContent className="subject-report-dialog top-[50%] max-h-[94dvh] w-[calc(100vw-1rem)] max-w-5xl translate-y-[-50%] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-xl p-3 pt-[max(1rem,env(safe-area-inset-top))] sm:max-h-[92vh] sm:p-6">
           <DialogHeader className="pr-8 text-left">
             <DialogTitle className="flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-emerald-600" />
@@ -2388,13 +2389,18 @@ export default function ReportsView() {
 
             {subjectReportData && (
               <div id="subject-report-table" className="report-preview-scroll max-w-full">
-                <div className="text-center mb-2">
-                  <h3 className="font-bold text-sm">{currentSchool?.name}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Subject Report: {selectedSubjectInfo?.name}
-                    {' | '}Max: {subjectReportMaxMarks}
-                    {' | '}{exams.find(e => e.id === selectedExam)?.name || ''}
-                  </p>
+                <div className="report-info-ribbon mb-4 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left sm:grid-cols-3 lg:grid-cols-6">
+                  {[
+                    { label: 'School', value: currentSchool?.name || '—' },
+                    { label: 'Report', value: 'Subject Report' },
+                    { label: 'Examination', value: exams.find(e => e.id === selectedExam)?.name || '—' },
+                    { label: 'Class', value: classes.find(c => c.id === activeReportClassId)?.fullName || '—' },
+                    { label: 'Subject', value: selectedSubjectInfo?.name || '—' },
+                    { label: 'Term / Year', value: `${exams.find(e => e.id === selectedExam)?.term || '—'} · ${exams.find(e => e.id === selectedExam)?.academicYear || '—'}` },
+                  ].map(item => <div key={item.label} className="min-w-0 rounded-lg bg-white px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-800">{item.value}</p>
+                  </div>)}
                 </div>
                 <Table className="no-mobile-cards min-w-[520px]">
                   <TableHeader>
@@ -2534,18 +2540,40 @@ export default function ReportsView() {
   const selectedExamInfo = useMemo(() => exams.find(e => e.id === selectedExam), [exams, selectedExam])
   const selectedClassInfo = useMemo(() => classes.find(c => c.id === selectedClass), [classes, selectedClass])
   const canUseToolbar = useMemo(() => Boolean(selectedExam && selectedClass && activeTab !== 'report-card'), [selectedExam, selectedClass, activeTab])
+  const activeReportLabel = activeTab === 'summary' ? 'Class Summary'
+    : activeTab === 'overall' ? 'Overall Results'
+      : activeTab === 'top-bottom' ? 'Top / Bottom Students'
+        : activeTab === 'subject-analysis' ? 'Subject Analysis'
+          : activeTab === 'report-card' ? 'Student Report Cards' : 'Subject Report'
+  const reportTabsGridClass = canViewClassReports && currentUser?.role === 'TEACHER'
+    ? 'sm:grid-cols-6'
+    : canViewClassReports ? 'sm:grid-cols-5' : 'sm:grid-cols-1'
 
   return (
-    <div className="w-full min-w-0 h-[calc(100dvh-8.75rem)] md:h-[calc(100vh-9rem)] flex flex-col overflow-hidden">
+    <div className="reports-page mx-auto w-full max-w-[1600px] min-w-0 space-y-5 pb-8">
       {/* Filters */}
-      <div className="flex-shrink-0">
-        <Card className="rounded-lg">
-          <CardContent className="p-3 sm:p-6">
-            <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-6 items-end">
-              <div className="space-y-2 xl:col-span-3 min-w-0">
+      <Card className="reports-filter-card overflow-visible rounded-2xl border-slate-200 shadow-sm">
+          <CardContent className="p-4 sm:p-5 lg:p-6">
+            <div className="mb-4 flex items-start gap-3 border-b border-slate-100 pb-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-slate-900 sm:text-lg">Reports</h2>
+                <p className="mt-0.5 text-sm text-slate-500">Choose the examination and class to view, print or export school reports.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 xl:grid-cols-12 sm:gap-4">
+              <div className="min-w-0 space-y-2 sm:col-span-1 xl:col-span-3">
                 <Label className="text-sm font-medium">Exam</Label>
-                <Select value={selectedExam} onValueChange={setSelectedExam}>
-                  <SelectTrigger className="min-w-0 h-10 text-sm">
+                <Select value={selectedExam} onValueChange={(examId) => {
+                  setSelectedExam(examId)
+                  const examClassId = getExamClassId(examId)
+                  if (examClassId && examClassId !== selectedClass) setSelectedClass(examClassId)
+                  setSelectedStudent('')
+                  setReportCard(null)
+                }}>
+                  <SelectTrigger className="h-11 min-w-0 rounded-lg bg-white text-sm">
                     <SelectValue placeholder="Select exam" className="truncate" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2564,7 +2592,7 @@ export default function ReportsView() {
                   </p>
                 )}
               </div>
-              <div className="space-y-2 xl:col-span-2 min-w-0">
+              <div className="min-w-0 space-y-2 sm:col-span-1 xl:col-span-2">
                 <Label className="text-sm font-medium">Class</Label>
                 <Select
                   value={selectedClass}
@@ -2576,7 +2604,7 @@ export default function ReportsView() {
                     setReportCard(null)
                   }}
                 >
-                  <SelectTrigger className="min-w-0 h-10 text-sm">
+                  <SelectTrigger className="h-11 min-w-0 rounded-lg bg-white text-sm">
                     <SelectValue placeholder="Select class" />
                   </SelectTrigger>
                   <SelectContent>
@@ -2587,10 +2615,10 @@ export default function ReportsView() {
                 </Select>
               </div>
               {activeTab === 'report-card' && (
-                <div className="space-y-2 col-span-2 xl:col-span-2 min-w-0">
+                <div className="min-w-0 space-y-2 sm:col-span-2 xl:col-span-2">
                   <Label className="text-sm font-medium">Student</Label>
                   <Select value={selectedStudent} onValueChange={setSelectedStudent}>
-                    <SelectTrigger className="min-w-0 h-10 text-sm">
+                    <SelectTrigger className="h-11 min-w-0 rounded-lg bg-white text-sm">
                       <SelectValue placeholder={t('selectStudent')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -2602,27 +2630,27 @@ export default function ReportsView() {
                   </Select>
                 </div>
               )}
-              {canViewClassReports && <div className="space-y-2 xl:col-span-2 min-w-0">
+              {canViewClassReports && <div className="min-w-0 space-y-2 xl:col-span-2">
                 <Label className="text-sm font-medium">{t('closingDate')}</Label>
                 <Input type="date" value={closingDate} onChange={(e) => setClosingDate(e.target.value)} className="h-10 text-sm" />
               </div>}
-              {canViewClassReports && <div className="space-y-2 xl:col-span-2 min-w-0">
+              {canViewClassReports && <div className="min-w-0 space-y-2 xl:col-span-2">
                 <Label className="text-sm font-medium">{t('openingDate')}</Label>
                 <Input type="date" value={openingDate} onChange={(e) => setOpeningDate(e.target.value)} className="h-10 text-sm" />
               </div>}
-              {currentUser?.role === 'SCHOOL_ADMIN' && canViewClassReports && <div className="space-y-2 xl:col-span-1 min-w-0">
+              {currentUser?.role === 'SCHOOL_ADMIN' && canViewClassReports && <div className="min-w-0 space-y-2 xl:col-span-1">
                 <Label className="invisible">Save dates</Label>
                 <Button variant="outline" onClick={saveReportDates} disabled={!selectedExam || !selectedClass} className="w-full gap-2 h-10 text-sm">
                   <Save className="w-4 h-4" />
                   Save
                 </Button>
               </div>}
-              <div className="space-y-2 xl:col-span-2 min-w-0">
+              <div className="min-w-0 space-y-2 xl:col-span-2">
                 <Label className="text-sm font-medium">Language</Label>
                 <div className="flex items-center gap-2 rounded-lg border bg-white px-4 py-2.5 shadow-sm">
                   <Languages className="h-4 w-4 text-emerald-600" />
                   <Select value={reportLang} onValueChange={(v) => setReportLang(v as 'en' | 'sw')}>
-                    <SelectTrigger className="h-10 w-[140px] border-0 px-0 shadow-none focus:ring-0 text-sm">
+                  <SelectTrigger className="h-11 w-full rounded-lg bg-white px-3 text-sm shadow-none focus:ring-0 sm:w-[140px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -2634,28 +2662,63 @@ export default function ReportsView() {
               </div>
             </div>
           </CardContent>
-        </Card>
-      </div>
+      </Card>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
+      <Card className="reports-context-card overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between lg:p-6">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
+              <School className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">{activeReportLabel}</p>
+              <h2 className="mt-1 truncate text-lg font-bold text-slate-900 sm:text-xl">{freshSchoolIdentity.name || currentSchool?.name || 'School Reports'}</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {selectedExamInfo?.name || 'Select an examination'}
+                {selectedClassInfo ? ` · ${selectedClassInfo.fullName}` : ''}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-start lg:justify-end">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Term</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">{selectedExamInfo?.term || '—'}</p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Academic Year</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">{selectedExamInfo?.academicYear || '—'}</p>
+            </div>
+            {closingDate && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Closing Date</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">{closingDate}</p>
+            </div>}
+            {openingDate && <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-700">Next Opening</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">{openingDate}</p>
+            </div>}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="reports-tabs w-full min-w-0 space-y-4">
         {/* Tabs */}
-        <div className="flex-shrink-0 bg-background pt-3">
-          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-            <TabsList className="inline-grid h-auto min-h-10 w-max min-w-full grid-cols-5 gap-1">
+        <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+          <div className="overflow-x-auto pb-1">
+            <TabsList className={`reports-tab-list inline-grid h-auto min-h-12 w-max min-w-full gap-1 bg-slate-100 p-1 sm:w-full ${reportTabsGridClass}`}>
               {canViewClassReports && <>
-                <TabsTrigger value="summary" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Class </span>Summary</TabsTrigger>
-                <TabsTrigger value="overall" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Overall </span>Results</TabsTrigger>
-                <TabsTrigger value="top-bottom" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">Top/Bottom</TabsTrigger>
-                <TabsTrigger value="subject-analysis" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Subject </span>Analysis</TabsTrigger>
-                <TabsTrigger value="report-card" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">Report<span className="hidden sm:inline"> Card</span></TabsTrigger>
+                <TabsTrigger value="summary" className="min-h-10 min-w-[112px] px-3 text-xs sm:text-sm"><span className="hidden sm:inline">Class </span>Summary</TabsTrigger>
+                <TabsTrigger value="overall" className="min-h-10 min-w-[112px] px-3 text-xs sm:text-sm"><span className="hidden sm:inline">Overall </span>Results</TabsTrigger>
+                <TabsTrigger value="top-bottom" className="min-h-10 min-w-[112px] px-3 text-xs sm:text-sm">Top / Bottom</TabsTrigger>
+                <TabsTrigger value="subject-analysis" className="min-h-10 min-w-[112px] px-3 text-xs sm:text-sm"><span className="hidden sm:inline">Subject </span>Analysis</TabsTrigger>
+                <TabsTrigger value="report-card" className="min-h-10 min-w-[112px] px-3 text-xs sm:text-sm">Report Card</TabsTrigger>
               </>}
-              {currentUser?.role === 'TEACHER' && <TabsTrigger value="subject-report" className="min-w-[140px] px-2 py-2 text-[11px] sm:text-sm">My Subject Reports</TabsTrigger>}
+              {currentUser?.role === 'TEACHER' && <TabsTrigger value="subject-report" className="min-h-10 min-w-[140px] px-3 text-xs sm:text-sm">Subject Report</TabsTrigger>}
             </TabsList>
           </div>
         </div>
 
         {/* Report Content - Scrollable */}
-        <div className="reports-content-scroll flex-1 min-h-0 overflow-y-auto overflow-x-auto overscroll-contain px-1 pb-8 pr-2 sm:px-0 sm:pb-2">
+        <div className="reports-content-scroll min-w-0 w-full space-y-4">
           {canViewClassReports && <TabsContent value="summary" className="mt-4 w-full min-w-0">
             {renderSummary()}
           </TabsContent>}
