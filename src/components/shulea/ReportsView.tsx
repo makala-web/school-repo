@@ -152,6 +152,7 @@ type LangKey = keyof typeof translations.en
 
 interface ExamItem {
   id: string
+  classId?: string
   name: string
   examType: string
   term: string
@@ -350,17 +351,32 @@ export default function ReportsView() {
       const loadedClasses: ClassItem[] = classData.classes || []
       if (currentUser?.role === 'TEACHER') {
         const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${currentSchool?.id || ''}`)
-        const teacherId = teacherData.teachers?.[0]?.id
+        // The teacher list is school-wide. Never assume its first row is the
+        // signed-in teacher, or their report exam list can be filtered to a
+        // colleague's assignments and end up empty.
+        const teacher = (teacherData.teachers || []).find((item: { id: string; userId?: string; user?: { id?: string } }) =>
+          item.userId === currentUser.id || item.user?.id === currentUser.id
+        )
+        const teacherId = teacher?.id
         if (teacherId) {
           const assignmentData = await apiCall(`/api/shulea/teacher-classes?teacherId=${teacherId}&schoolId=${currentSchool?.id || ''}&actorUserId=${currentUser.id}`)
           const classTeacherIds = (assignmentData.classTeacherAssignments || []).map((item: { id: string }) => item.id)
           setClassTeacherClassIds(classTeacherIds)
-          const accessibleClassIds = new Set<string>([
+          const accessibleClassIds = [...new Set<string>([
             ...classTeacherIds,
             ...(assignmentData.subjectOnlyAssignments || []).map((item: { id: string }) => item.id),
-          ])
-          const allowedClassIds = new Set(loadedClasses.filter(cls => accessibleClassIds.has(cls.id)).map(cls => cls.id))
-          loadedExams = loadedExams.filter(exam => allowedClassIds.has(exam.class?.id || ''))
+          ])].filter(classId => loadedClasses.some(cls => cls.id === classId))
+          // Fetch exams class by class for teachers. This uses the same
+          // assignment-aware GET path as Tabia and avoids dropping a valid
+          // exam when school-wide cached results omit class relation data.
+          const classExamResponses = await Promise.all(accessibleClassIds.map(classId =>
+            apiCall(`/api/shulea/exams?classId=${encodeURIComponent(classId)}&schoolId=${encodeURIComponent(currentSchool?.id || '')}`)
+          ))
+          const examsById = new Map<string, ExamItem>()
+          classExamResponses.forEach(response => {
+            for (const exam of (response.exams || []) as ExamItem[]) examsById.set(exam.id, exam)
+          })
+          loadedExams = [...examsById.values()]
         } else {
           setClassTeacherClassIds([])
           loadedExams = []
@@ -2529,7 +2545,7 @@ export default function ReportsView() {
                   <SelectContent>
                     {modeExams.map((exam) => (
                       <SelectItem key={exam.id} value={exam.id} className="text-sm">
-                        {exam.name} - {exam.class?.fullName} ({exam.term})
+                        {exam.name} - {exam.class?.fullName || modeClasses.find(cls => cls.id === (exam.class?.id || exam.classId))?.fullName || ''} ({exam.term})
                       </SelectItem>
                     ))}
                   </SelectContent>

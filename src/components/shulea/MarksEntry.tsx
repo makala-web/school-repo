@@ -38,6 +38,7 @@ interface ClassItem {
 
 interface ExamItem {
   id: string
+  classId: string
   name: string
   examType: string
   term: string
@@ -73,6 +74,7 @@ export default function MarksEntry() {
   const { currentSchool, currentUser, schoolType } = useAppStore()
   const [classes, setClasses] = useState<ClassItem[]>([])
   const [exams, setExams] = useState<ExamItem[]>([])
+  const [examsLoading, setExamsLoading] = useState(false)
   const [subjects, setSubjects] = useState<SubjectItem[]>([])
   const [students, setStudents] = useState<StudentItem[]>([])
 
@@ -101,6 +103,7 @@ export default function MarksEntry() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [parsingExcel, setParsingExcel] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const examRequestId = useRef(0)
 
   // Compute dialog
   const [computeDialogOpen, setComputeDialogOpen] = useState(false)
@@ -175,30 +178,44 @@ export default function MarksEntry() {
   }
 
   useEffect(() => {
+    examRequestId.current += 1
     setSelectedExam('')
     setSelectedSubject('')
     setMarkRows([])
     setDataLoaded(false)
+    setExams([])
 
     if (selectedClass) {
-      loadExams()
+      void loadExams(selectedClass)
       loadSubjects()
     } else {
-      setExams([])
+      setExamsLoading(false)
       setSubjects([])
     }
   }, [selectedClass])
 
-  async function loadExams() {
+  async function loadExams(classId: string) {
+    const requestId = ++examRequestId.current
+    setExamsLoading(true)
     try {
-      const data = await apiCall(`/api/shulea/exams?classId=${selectedClass}`)
-      const examsData = data.exams || []
+      const schoolId = currentSchool?.id
+      const query = new URLSearchParams({ classId, ...(schoolId ? { schoolId } : {}) })
+      const data = await apiCall(`/api/shulea/exams?${query.toString()}`)
+      if (requestId !== examRequestId.current) return
+      // Keep the selector scoped to the selected class even if an API/cache
+      // response contains broader school data.
+      const examsData: ExamItem[] = (data.exams || []).filter((exam: ExamItem) => exam.classId === classId)
       setExams(examsData)
-      if (examsData.length >= 1) {
+      if (examsData.length > 0) {
         setSelectedExam(examsData[0].id)
       }
-    } catch {
-      toast.error('Failed to load exams')
+    } catch (error) {
+      if (requestId === examRequestId.current) {
+        setExams([])
+        toast.error(error instanceof Error ? error.message : 'Failed to load exams for this class')
+      }
+    } finally {
+      if (requestId === examRequestId.current) setExamsLoading(false)
     }
   }
 
@@ -698,9 +715,9 @@ export default function MarksEntry() {
             </div>
             <div className="space-y-2">
               <Label>Exam</Label>
-              <Select value={selectedExam} onValueChange={setSelectedExam} disabled={!selectedClass}>
+              <Select value={selectedExam} onValueChange={setSelectedExam} disabled={!selectedClass || examsLoading}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select exam" />
+                  <SelectValue placeholder={examsLoading ? 'Loading exams…' : 'Select exam'} />
                 </SelectTrigger>
                 <SelectContent>
                   {exams.map((exam) => (
@@ -710,6 +727,9 @@ export default function MarksEntry() {
                   ))}
                 </SelectContent>
               </Select>
+              {selectedClass && !examsLoading && exams.length === 0 && (
+                <p className="text-xs text-amber-700">No exams are registered for this class yet. Ask the School Admin to check the exam’s class assignment.</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Subject</Label>
