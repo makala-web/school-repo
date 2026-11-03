@@ -25,6 +25,7 @@ interface Teacher {
   id: string
   name: string
   shortName?: string
+  sign?: string | null
   email?: string
   phone?: string
   userId?: string
@@ -98,6 +99,11 @@ export default function TeacherManagement() {
   const [activationAmount, setActivationAmount] = useState('30')
   const [activationUnit, setActivationUnit] = useState<'DAYS' | 'MONTHS'>('DAYS')
   const [activationDate, setActivationDate] = useState('')
+  const [reactivateAccount, setReactivateAccount] = useState(false)
+  const [signatureTeacher, setSignatureTeacher] = useState<Teacher | null>(null)
+  const [signatureShortName, setSignatureShortName] = useState('')
+  const [signatureText, setSignatureText] = useState('')
+  const [savingSignature, setSavingSignature] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -235,13 +241,43 @@ export default function TeacherManagement() {
   async function saveActivation() {
     if (!activationTeacher?.userId || !currentUser?.id) return
     try {
-      await apiCall('/api/shulea/users', { method: 'PUT', body: JSON.stringify({ action: 'extend-teacher-activation', id: activationTeacher.userId, durationAmount: Number(activationAmount), durationUnit: activationUnit, ...(activationDate ? { expiryDate: activationDate } : {}) }) })
-      toast.success('Teacher activation updated')
+      const result = await apiCall('/api/shulea/users', { method: 'PUT', body: JSON.stringify({ action: 'extend-teacher-activation', id: activationTeacher.userId, durationAmount: Number(activationAmount), durationUnit: activationUnit, reactivate: reactivateAccount, ...(activationDate ? { expiryDate: activationDate } : {}) }) })
+      toast.success(result.user?.active ? 'Teacher activation updated; account is active' : 'Teacher license updated; account remains deactivated')
       setActivationTeacher(null)
       setActivationDate('')
+      setReactivateAccount(false)
       await loadData()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update teacher activation')
+    }
+  }
+
+  function openActivationDialog(teacher: Teacher) {
+    setActivationTeacher(teacher)
+    setReactivateAccount(teacher.user?.active === false)
+  }
+
+  function openSignatureDialog(teacher: Teacher) {
+    setSignatureTeacher(teacher)
+    setSignatureShortName(teacher.shortName || '')
+    setSignatureText(teacher.sign || '')
+  }
+
+  async function saveSignature() {
+    if (!signatureTeacher || !currentSchool?.id) return
+    setSavingSignature(true)
+    try {
+      await apiCall('/api/shulea/teachers', {
+        method: 'PUT',
+        body: JSON.stringify({ id: signatureTeacher.id, shortName: signatureShortName.trim() || null, sign: signatureText.trim() || null }),
+      })
+      toast.success('Teacher signature saved. New reports will use it for the classes assigned to this teacher.')
+      setSignatureTeacher(null)
+      await loadData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save teacher signature')
+    } finally {
+      setSavingSignature(false)
     }
   }
 
@@ -350,8 +386,8 @@ export default function TeacherManagement() {
                       <TableCell>
                         <div>
                           <p className="font-medium">{teacher.name}</p>
-                          {teacher.shortName && (
-                            <p className="text-xs text-gray-500">{teacher.shortName}</p>
+                          {(teacher.sign || teacher.shortName) && (
+                            <p className="text-xs text-gray-500">Saini: {teacher.sign || teacher.shortName}</p>
                           )}
                         </div>
                       </TableCell>
@@ -370,13 +406,15 @@ export default function TeacherManagement() {
                       </TableCell>
                       <TableCell className="text-xs">
                         {teacher.user?.activationStartDate ? `From ${formatDate(teacher.user.activationStartDate)} · ` : 'Start on first activation · '}{teacher.user?.activationExpiryDate ? `Ends ${formatDate(teacher.user.activationExpiryDate)}` : 'No expiry set'}
-                        {teacher.userId && <Button variant="link" size="sm" className="px-1" onClick={() => setActivationTeacher(teacher)}>Extend / set</Button>}
+                        {teacher.userId && <Button variant="link" size="sm" className="px-1" onClick={() => openActivationDialog(teacher)}>Extend / set</Button>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
-                          <Settings2 className="mr-2 h-4 w-4" />
-                          Manage
-                        </Button>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => openSignatureDialog(teacher)}>Edit signature</Button>
+                          <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
+                            <Settings2 className="mr-2 h-4 w-4" />Manage
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -507,12 +545,24 @@ export default function TeacherManagement() {
         <DialogContent>
           <DialogHeader><DialogTitle>Teacher activation</DialogTitle><DialogDescription>Extend the existing account without sending another invitation.</DialogDescription></DialogHeader>
           <p className="text-sm">{activationTeacher?.name} · starts {activationTeacher?.user?.activationStartDate ? formatDate(activationTeacher.user.activationStartDate) : 'when first activated'} · currently ends {activationTeacher?.user?.activationExpiryDate ? formatDate(activationTeacher.user.activationExpiryDate) : 'no expiry'}</p>
+          {activationTeacher?.user?.active === false && <label className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"><input type="checkbox" checked={reactivateAccount} onChange={e => setReactivateAccount(e.target.checked)} />Reactivate this account after saving the new license</label>}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2"><Label htmlFor="activation-amount">Extend by</Label><Input id="activation-amount" type="number" min="1" value={activationAmount} onChange={e => setActivationAmount(e.target.value)} /></div>
             <div className="space-y-2"><Label htmlFor="activation-unit">Unit</Label><select id="activation-unit" value={activationUnit} onChange={e => setActivationUnit(e.target.value as 'DAYS' | 'MONTHS')} className="w-full rounded-md border px-3 py-2"><option value="DAYS">Days</option><option value="MONTHS">Months</option></select></div>
           </div>
           <div className="space-y-2"><Label htmlFor="activation-date">Or set exact end date</Label><Input id="activation-date" type="date" value={activationDate} onChange={e => setActivationDate(e.target.value)} /></div>
           <DialogFooter><Button variant="outline" onClick={() => setActivationTeacher(null)}>Cancel</Button><Button onClick={saveActivation}>Save activation</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(signatureTeacher)} onOpenChange={open => { if (!open) setSignatureTeacher(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit teacher report signature</DialogTitle><DialogDescription>Updates apply to new reports for every class where this teacher is the active Class Teacher.</DialogDescription></DialogHeader>
+          <p className="text-sm font-medium">{signatureTeacher?.name}</p>
+          <div className="space-y-2"><Label htmlFor="teacher-short-signature">Short name</Label><Input id="teacher-short-signature" maxLength={60} placeholder="A. Hamza" value={signatureShortName} onChange={e => setSignatureShortName(e.target.value)} /></div>
+          <div className="space-y-2"><Label htmlFor="teacher-signature">Signature text (optional)</Label><Input id="teacher-signature" maxLength={120} placeholder="Optional printed signature" value={signatureText} onChange={e => setSignatureText(e.target.value)} /></div>
+          <p className="text-xs text-muted-foreground">Reports prefer Signature text, then Short name. The School Head signature remains controlled by School settings.</p>
+          <DialogFooter><Button variant="outline" onClick={() => setSignatureTeacher(null)} disabled={savingSignature}>Cancel</Button><Button onClick={saveSignature} disabled={savingSignature}>{savingSignature ? 'Saving...' : 'Save signature'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

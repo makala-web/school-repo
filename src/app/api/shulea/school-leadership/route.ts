@@ -90,11 +90,6 @@ export async function POST(request: NextRequest) {
         }
       });
 
-      await db.school.update({
-        where: { id: schoolId },
-        data: { headTeacherName: null }
-      });
-
       return NextResponse.json({ message: 'Head teacher cleared successfully', leadership });
     }
 
@@ -122,14 +117,6 @@ export async function POST(request: NextRequest) {
           status: 'ACTIVE',
           startDate: startDate || new Date().toISOString().slice(0, 10),
           endDate: null
-        }
-      });
-
-      await db.school.update({
-        where: { id: schoolId },
-        data: {
-          headTeacherName: teacher.name,
-          headTeacherSign: teacher.sign || null,
         }
       });
 

@@ -80,6 +80,13 @@ export async function POST(request: NextRequest) {
     }
     if (actor.schoolId !== schoolId) return NextResponse.json({ error: 'Cross-school class access denied' }, { status: 403 })
 
+    if (classTeacherId) {
+      const assignedTeacher = await db.teacher.findUnique({ where: { id: classTeacherId }, include: { user: { select: { role: true } } } })
+      if (!assignedTeacher || assignedTeacher.schoolId !== schoolId || (assignedTeacher.user && assignedTeacher.user.role !== 'TEACHER')) {
+        return NextResponse.json({ error: 'Only a teacher account belonging to this school can be assigned as Class Teacher' }, { status: 400 })
+      }
+    }
+
     const classRecord = await db.class.create({
       data: {
         name,
@@ -125,6 +132,13 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Class not found' }, { status: 404 });
     }
     if (existing.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Cross-school class access denied' }, { status: 403 })
+
+    if (classTeacherId !== undefined && classTeacherId !== null) {
+      const assignedTeacher = await db.teacher.findUnique({ where: { id: classTeacherId }, include: { user: { select: { role: true } } } })
+      if (!assignedTeacher || assignedTeacher.schoolId !== existing.schoolId || (assignedTeacher.user && assignedTeacher.user.role !== 'TEACHER')) {
+        return NextResponse.json({ error: 'Only a teacher account belonging to this school can be assigned as Class Teacher' }, { status: 400 })
+      }
+    }
 
     const classRecord = await db.class.update({
       where: { id },

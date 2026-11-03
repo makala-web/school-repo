@@ -29,7 +29,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
 import TeacherManagement from '@/components/shulea/TeacherManagement'
-import HeadTeacherManagement from '@/components/shulea/HeadTeacherManagement'
 import DeviceManagement from '@/components/shulea/DeviceManagement'
 
 interface SchoolData {
@@ -587,7 +586,7 @@ export default function SettingsView() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className={`grid w-full ${currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN' ? 'grid-cols-8 max-w-4xl' : 'grid-cols-5 max-w-2xl'}`}>
+        <TabsList className={`grid w-full ${currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN' ? 'grid-cols-7 max-w-4xl' : 'grid-cols-5 max-w-2xl'}`}>
           <TabsTrigger value="school" className="text-xs sm:text-sm">School</TabsTrigger>
           <TabsTrigger value="license" className="text-xs sm:text-sm">License</TabsTrigger>
           <TabsTrigger value="grading" className="text-xs sm:text-sm">Grading</TabsTrigger>
@@ -595,9 +594,6 @@ export default function SettingsView() {
           <TabsTrigger value="password" className="text-xs sm:text-sm">Password</TabsTrigger>
           {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
             <TabsTrigger value="teachers" className="text-xs sm:text-sm">Teachers</TabsTrigger>
-          )}
-          {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
-            <TabsTrigger value="head-teacher" className="text-xs sm:text-sm">Head Teacher</TabsTrigger>
           )}
           {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
             <TabsTrigger value="devices" className="text-xs sm:text-sm">Devices</TabsTrigger>
@@ -731,9 +727,9 @@ export default function SettingsView() {
                   {/* Head Teacher Sign */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Head Teacher Signature / Initials</Label>
+                      <Label>School Head Signature / Initials</Label>
                       <Input value={schoolForm.headTeacherSign} onChange={(e) => setSchoolForm(p => ({ ...p, headTeacherSign: e.target.value }))} placeholder="e.g. A.Mwangi" />
-                      <p className="text-xs text-muted-foreground">This appears as auto-signature on report cards</p>
+                      <p className="text-xs text-muted-foreground">This is the School Admin's signature and appears on every class report.</p>
                     </div>
                   </div>
 
@@ -741,13 +737,13 @@ export default function SettingsView() {
                     <div>
                       <h3 className="text-sm font-semibold text-emerald-800">Report Card Teachers & Comments</h3>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Head Teacher details and grade-based comments are used automatically on report cards.
+                        School Admin / Head Teacher details and grade-based comments are used automatically on every class report.
                         Class Teacher details come from the Class Teacher Register and accepted invitations.
                       </p>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Head Teacher Name</Label>
+                        <Label>School Admin / Head Teacher Name</Label>
                         <Input
                           value={schoolForm.headTeacherName}
                           onChange={(e) => setSchoolForm(p => ({ ...p, headTeacherName: e.target.value }))}
@@ -1276,12 +1272,6 @@ export default function SettingsView() {
         {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
           <TabsContent value="teachers" className="mt-4">
             <TeacherManagement />
-          </TabsContent>
-        )}
-
-        {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
-          <TabsContent value="head-teacher" className="mt-4">
-            <HeadTeacherManagement />
           </TabsContent>
         )}
 

@@ -139,7 +139,8 @@ async function handleAssignClassTeacher(data: {
 
   // Verify teacher exists and belongs to school
   const teacher = await db.teacher.findUnique({
-    where: { id: teacherId }
+    where: { id: teacherId },
+    include: { user: { select: { role: true } } },
   });
 
   if (!teacher || teacher.schoolId !== schoolId) {
@@ -147,6 +148,9 @@ async function handleAssignClassTeacher(data: {
       { error: 'Teacher not found or does not belong to school' },
       { status: 404 }
     );
+  }
+  if (teacher.user && teacher.user.role !== 'TEACHER') {
+    return NextResponse.json({ error: 'Only invited teacher accounts can be assigned as Class Teachers' }, { status: 400 });
   }
 
   const today = new Date().toISOString().slice(0, 10)
@@ -225,7 +229,8 @@ async function handleUpdateAssignment(data: {
   // If changing teacher, verify new teacher exists
   if (updateData.teacherId) {
     const newTeacher = await db.teacher.findUnique({
-      where: { id: updateData.teacherId }
+      where: { id: updateData.teacherId },
+      include: { user: { select: { role: true } } },
     });
 
     if (!newTeacher || newTeacher.schoolId !== assignment.schoolId) {
@@ -233,6 +238,9 @@ async function handleUpdateAssignment(data: {
         { error: 'Teacher not found or does not belong to school' },
         { status: 404 }
       );
+    }
+    if (newTeacher.user && newTeacher.user.role !== 'TEACHER') {
+      return NextResponse.json({ error: 'Only invited teacher accounts can be assigned as Class Teachers' }, { status: 400 });
     }
   }
 

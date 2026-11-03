@@ -37,7 +37,7 @@ export async function PUT(request: NextRequest) {
     if (!actor || actor.role !== 'SCHOOL_ADMIN' || !actor.schoolId) {
       return NextResponse.json({ error: 'School administrator access required' }, { status: 403 })
     }
-    const body = await request.json() as { id?: string; active?: boolean; action?: string; durationAmount?: number; durationUnit?: 'DAYS' | 'MONTHS'; expiryDate?: string }
+    const body = await request.json() as { id?: string; active?: boolean; action?: string; durationAmount?: number; durationUnit?: 'DAYS' | 'MONTHS'; expiryDate?: string; reactivate?: boolean }
     if (body.action === 'extend-teacher-activation') {
       if (!body.id) return NextResponse.json({ error: 'Teacher account is required' }, { status: 400 })
       const target = await db.user.findUnique({ where: { id: body.id } })
@@ -60,8 +60,8 @@ export async function PUT(request: NextRequest) {
       const start = target.activationStartDate || now
       if (expiry < start) return NextResponse.json({ error: 'Activation end date must be after its start date' }, { status: 400 })
       const updated = await db.$transaction(async tx => {
-        const user = await tx.user.update({ where: { id: target.id }, data: { activationStartDate: start, activationExpiryDate: expiry } })
-        await tx.auditLog.create({ data: { action: 'TEACHER_ACTIVATION_EXTENDED', entityType: 'USER', entityId: target.id, schoolId: actor.schoolId!, userId: actor.id, changes: JSON.stringify({ previousStart: target.activationStartDate, previousExpiry: target.activationExpiryDate, activationStartDate: start, activationExpiryDate: expiry }), details: `Teacher activation updated for ${target.fullName}` } })
+        const user = await tx.user.update({ where: { id: target.id }, data: { activationStartDate: start, activationExpiryDate: expiry, ...(body.reactivate === true ? { active: true } : {}) } })
+        await tx.auditLog.create({ data: { action: 'TEACHER_ACTIVATION_EXTENDED', entityType: 'USER', entityId: target.id, schoolId: actor.schoolId!, userId: actor.id, changes: JSON.stringify({ previousStart: target.activationStartDate, previousExpiry: target.activationExpiryDate, previousActive: target.active, activationStartDate: start, activationExpiryDate: expiry, active: user.active }), details: `Teacher activation updated for ${target.fullName}` } })
         return user
       })
       return NextResponse.json({ message: 'Teacher activation updated successfully', user: sanitizeUser(updated as unknown as Record<string, unknown>) })

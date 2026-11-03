@@ -330,15 +330,22 @@ export async function PUT(request: NextRequest) {
     }
     if (existing.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Cross-school teacher access denied' }, { status: 403 })
 
-    const teacher = await db.teacher.update({
-      where: { id },
-      data: {
-        name: name ?? undefined,
-        shortName: shortName !== undefined ? shortName : undefined,
-        sign: sign !== undefined ? sign : undefined,
-        phone: phone !== undefined ? phone : undefined,
-      },
-    });
+    const teacher = await db.$transaction(async tx => {
+      const updated = await tx.teacher.update({
+        where: { id },
+        data: {
+          name: name ?? undefined,
+          shortName: shortName !== undefined ? shortName : undefined,
+          sign: sign !== undefined ? sign : undefined,
+          phone: phone !== undefined ? phone : undefined,
+        },
+      })
+      const previous = await tx.syncChange.findFirst({ where: { schoolId: existing.schoolId, entityType: 'TEACHER', entityId: id }, orderBy: { sequence: 'desc' }, select: { version: true } })
+      const sequence = await tx.syncSequence.upsert({ where: { schoolId: existing.schoolId }, create: { schoolId: existing.schoolId, nextSequence: 1 }, update: { nextSequence: { increment: 1 } }, select: { nextSequence: true } })
+      await tx.syncChange.create({ data: { schoolId: existing.schoolId, sequence: sequence.nextSequence, entityType: 'TEACHER', entityId: id, action: 'UPSERT', version: (previous?.version || 0) + 1, payload: JSON.stringify(updated) } })
+      await tx.auditLog.create({ data: { action: 'TEACHER_PROFILE_UPDATED', entityType: 'TEACHER', entityId: id, schoolId: existing.schoolId, userId: actor.id, changes: JSON.stringify({ shortName: { from: existing.shortName, to: updated.shortName }, sign: { from: existing.sign, to: updated.sign } }), details: `Teacher profile updated for ${updated.name}` } })
+      return updated
+    })
 
     return NextResponse.json({
       message: 'Teacher updated successfully',

@@ -55,7 +55,12 @@ export async function GET(request: NextRequest) {
     }
     if (change.entityType === 'SUBJECT') return allowedSubjectIds.has(change.entityId)
     if (change.entityType === 'CLASS') return authorizedClasses.has(change.entityId)
-    if (change.entityType === 'TEACHER') return change.entityId === ownTeacher?.id
+    if (change.entityType === 'TEACHER') {
+      if (change.entityId === ownTeacher?.id) return true
+      if (!authorizedClasses.size) return false
+      const classTeacherAssignment = await db.classTeacherAssignment.findFirst({ where: { teacherId: change.entityId, classId: { in: [...authorizedClasses] }, schoolId: actor.schoolId!, status: 'ACTIVE' }, select: { id: true } })
+      return Boolean(classTeacherAssignment)
+    }
     if (change.entityType === 'CLASS_TEACHER_ASSIGNMENT') return payload?.teacherId === ownTeacher?.id
     const classId = payloadClassId(change.payload)
     return Boolean(classId && authorizedClasses.has(classId))
