@@ -143,6 +143,34 @@ function newLocalId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+async function assertLocalStudentWriteAccess(classId: string, studentId?: string) {
+  const user = useAppStore.getState().currentUser
+  if (!user?.id || !user.schoolId || !classId) throw new Error('A signed-in school account and class are required')
+  const classRows = await ConnectionManager.query<{ schoolId: string }>(
+    'SELECT schoolId FROM Class WHERE id = ? LIMIT 1', [classId],
+  )
+  if (!classRows[0] || classRows[0].schoolId !== user.schoolId) throw new Error('Class does not belong to your school')
+  if (user.role === 'SCHOOL_ADMIN') return
+  if (user.role !== 'TEACHER') throw new Error('Only a Class Teacher or School Admin can manage students')
+  const teacherRows = await ConnectionManager.query<{ id: string }>(
+    'SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1', [user.id, user.schoolId],
+  )
+  if (!teacherRows[0]) throw new Error('Teacher profile is unavailable offline')
+  const allowed = await ConnectionManager.query<{ id: string }>(
+    "SELECT id FROM ClassTeacherAssignment WHERE teacherId = ? AND schoolId = ? AND classId = ? AND status = 'ACTIVE' LIMIT 1",
+    [teacherRows[0].id, user.schoolId, classId],
+  )
+  if (!allowed.length) throw new Error('Only the assigned Class Teacher can manage students in this class')
+  if (studentId) {
+    const studentRows = await ConnectionManager.query<{ classId: string; schoolId: string }>(
+      'SELECT classId, schoolId FROM Student WHERE id = ? AND schoolId = ? LIMIT 1', [studentId, user.schoolId],
+    )
+    if (!studentRows[0] || studentRows[0].classId !== classId) {
+      throw new Error('Only students in your assigned class can be managed')
+    }
+  }
+}
+
 async function listLocalClassTeacherAssignments(params: Record<string, unknown>) {
   const currentUser = useAppStore.getState().currentUser
   const schoolId = String(params.schoolId || currentUser?.schoolId || '')
@@ -354,14 +382,33 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
   // Students
   '/api/shulea/students': (params, method) => {
     if (method === 'POST' && params.action === 'csv-upload') {
-      return importStudentsFromCsv(params.csvData as string, params.classId as string, params.schoolId as string)
+      if (String(params.schoolId || '') !== (useAppStore.getState().currentUser?.schoolId || '')) throw new Error('Cross-school student registration denied')
+      return assertLocalStudentWriteAccess(String(params.classId || '')).then(() =>
+        importStudentsFromCsv(params.csvData as string, params.classId as string, params.schoolId as string))
     }
     if (method === 'POST' && params.file instanceof File) {
-      return importStudentsFromFile(params.file, params.classId as string, params.schoolId as string)
+      if (String(params.schoolId || '') !== (useAppStore.getState().currentUser?.schoolId || '')) throw new Error('Cross-school student registration denied')
+      return assertLocalStudentWriteAccess(String(params.classId || '')).then(() =>
+        importStudentsFromFile(params.file as File, params.classId as string, params.schoolId as string))
     }
-    if (method === 'POST') return StudentsApi.create(params as unknown as Parameters<typeof StudentsApi.create>[0])
-    if (method === 'PUT') return StudentsApi.update(params as unknown as Parameters<typeof StudentsApi.update>[0])
-    if (method === 'DELETE') return StudentsApi.delete(params.id as string)
+    if (method === 'POST') {
+      if (String(params.schoolId || '') !== (useAppStore.getState().currentUser?.schoolId || '')) throw new Error('Cross-school student registration denied')
+      return assertLocalStudentWriteAccess(String(params.classId || '')).then(() =>
+        StudentsApi.create(params as unknown as Parameters<typeof StudentsApi.create>[0]))
+    }
+    if (method === 'PUT') {
+      const studentId = String(params.id || '')
+      const destinationClassId = String(params.classId || '')
+      return assertLocalStudentWriteAccess(destinationClassId, studentId).then(() =>
+        StudentsApi.update(params as unknown as Parameters<typeof StudentsApi.update>[0]))
+    }
+    if (method === 'DELETE') {
+      const studentId = String(params.id || '')
+      return ConnectionManager.query<{ classId: string }>('SELECT classId FROM Student WHERE id = ? LIMIT 1', [studentId]).then(rows => {
+        if (!rows[0]) throw new Error('Student not found')
+        return assertLocalStudentWriteAccess(rows[0].classId, studentId).then(() => StudentsApi.delete(studentId))
+      })
+    }
     if (params.id) return StudentsApi.getById(params.id as string)
     if (params.nextAdmissionNo) return StudentsApi.getNextAdmissionNo(params.nextAdmissionNo as string)
     return StudentsApi.list(params)
@@ -379,9 +426,13 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
   '/api/shulea/teachers': async (params, method) => {
     if (method && method !== 'GET') throw new Error('Teacher administration requires an internet connection')
     const schoolId = String(params.schoolId || '')
+    const offlineUser = useAppStore.getState().currentUser
     const teachers = await ConnectionManager.query<Record<string, unknown>>(
-      'SELECT id, name, shortName, email, phone, userId, schoolId FROM Teacher WHERE schoolId = ? ORDER BY name ASC',
-      [schoolId],
+      `SELECT id, name, shortName, email, phone, userId, schoolId FROM Teacher
+       WHERE schoolId = ?${offlineUser?.role === 'TEACHER' ? ' AND userId = ?' : ''} ORDER BY name ASC`,
+      offlineUser?.role === 'TEACHER'
+        ? [schoolId, offlineUser.id]
+        : [schoolId],
     )
     return { teachers }
   },
@@ -802,7 +853,17 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
     const localOptions = await prepareOfflineOptions(endpoint, options)
     const result = await apiCallMobile(endpoint, localOptions)
     if (isMutation && currentUser?.id && currentUser.schoolId && typeof localOptions?.body === 'string') {
-      const versionedBody = await addMarkVersionsToMutation(endpoint, localOptions.body)
+      let queueBody = localOptions.body
+      if (endpoint.split('?')[0] === '/api/shulea/students' && method === 'POST') {
+        try {
+          const queued = JSON.parse(queueBody) as Record<string, unknown>
+          const created = result as Record<string, unknown>
+          if (queued.action === 'csv-upload' && Array.isArray(created.studentIds)) {
+            queueBody = JSON.stringify({ ...queued, studentIds: created.studentIds })
+          }
+        } catch { /* Keep the original request if enrichment is unavailable. */ }
+      }
+      const versionedBody = await addMarkVersionsToMutation(endpoint, queueBody)
       await enqueueOfflineMutation({
         endpoint,
         method,
@@ -840,7 +901,17 @@ export async function apiCall(endpoint: string, options?: RequestInit) {
       const localOptions = await prepareOfflineOptions(endpoint, options)
       const result = await apiCallMobile(endpoint, localOptions)
       if (isMutation && currentUser?.id && currentUser.schoolId && typeof localOptions?.body === 'string') {
-        const versionedBody = await addMarkVersionsToMutation(endpoint, localOptions.body)
+        let queueBody = localOptions.body
+        if (endpoint.split('?')[0] === '/api/shulea/students' && method === 'POST') {
+          try {
+            const queued = JSON.parse(queueBody) as Record<string, unknown>
+            const created = result as Record<string, unknown>
+            if (queued.action === 'csv-upload' && Array.isArray(created.studentIds)) {
+              queueBody = JSON.stringify({ ...queued, studentIds: created.studentIds })
+            }
+          } catch { /* Keep the original request if enrichment is unavailable. */ }
+        }
+        const versionedBody = await addMarkVersionsToMutation(endpoint, queueBody)
         await enqueueOfflineMutation({
           endpoint,
           method,
@@ -918,6 +989,16 @@ async function prepareOfflineOptions(endpoint: string, options?: RequestInit): P
       try {
         const body = JSON.parse(options.body) as Record<string, unknown>
         if (body.action === 'assign' && !body.id) {
+          return { ...options, body: JSON.stringify({ ...body, id: newLocalId() }) }
+        }
+      } catch {
+        return options
+      }
+    }
+    if (path === '/api/shulea/students' && (options.method || 'GET').toUpperCase() === 'POST') {
+      try {
+        const body = JSON.parse(options.body) as Record<string, unknown>
+        if (!body.action && typeof body.id !== 'string') {
           return { ...options, body: JSON.stringify({ ...body, id: newLocalId() }) }
         }
       } catch {

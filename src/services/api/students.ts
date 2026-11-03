@@ -17,6 +17,8 @@ export interface BulkImportResponse {
   message: string
   imported: number
   errors?: string[]
+  /** Stable local IDs let offline replay preserve the local records' identity. */
+  studentIds?: string[]
 }
 
 export const StudentsApi = {
@@ -129,7 +131,8 @@ export const StudentsApi = {
       return ApiClient.success({
         message: `${created.length} students imported successfully`,
         imported: created.length,
-        errors: errors.length > 0 ? errors : undefined
+        errors: errors.length > 0 ? errors : undefined,
+        studentIds: created.map(student => student.id),
       })
     } catch (error) {
       return ApiClient.error((error as Error).message)

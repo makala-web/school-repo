@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { UserRepository } from '@/repositories'
 import { getAuthenticatedUser } from '@/lib/server-auth'
+import { db } from '@/lib/db'
 
 
 function sanitizeUser(user: Record<string, unknown>) {
@@ -36,7 +37,35 @@ export async function PUT(request: NextRequest) {
     if (!actor || actor.role !== 'SCHOOL_ADMIN' || !actor.schoolId) {
       return NextResponse.json({ error: 'School administrator access required' }, { status: 403 })
     }
-    const body = await request.json() as { id?: string; active?: boolean }
+    const body = await request.json() as { id?: string; active?: boolean; action?: string; durationAmount?: number; durationUnit?: 'DAYS' | 'MONTHS'; expiryDate?: string }
+    if (body.action === 'extend-teacher-activation') {
+      if (!body.id) return NextResponse.json({ error: 'Teacher account is required' }, { status: 400 })
+      const target = await db.user.findUnique({ where: { id: body.id } })
+      if (!target || target.schoolId !== actor.schoolId || target.role !== 'TEACHER') return NextResponse.json({ error: 'Teacher account does not belong to your school' }, { status: 404 })
+      const now = new Date()
+      let expiry: Date
+      if (body.expiryDate) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(body.expiryDate)) return NextResponse.json({ error: 'Enter a valid end date' }, { status: 400 })
+        expiry = new Date(`${body.expiryDate}T23:59:59.999Z`)
+        if (Number.isNaN(expiry.getTime()) || expiry.toISOString().slice(0, 10) !== body.expiryDate) return NextResponse.json({ error: 'Enter a valid end date' }, { status: 400 })
+      } else {
+        if (!Number.isInteger(body.durationAmount) || (body.durationAmount || 0) < 1 || !['DAYS', 'MONTHS'].includes(body.durationUnit || '')) return NextResponse.json({ error: 'Enter a positive number of days or months' }, { status: 400 })
+        const base = target.activationExpiryDate && target.activationExpiryDate > now ? new Date(target.activationExpiryDate) : now
+        expiry = new Date(base)
+        if (body.durationUnit === 'MONTHS') expiry.setUTCMonth(expiry.getUTCMonth() + body.durationAmount!)
+        else expiry.setUTCDate(expiry.getUTCDate() + body.durationAmount!)
+        expiry.setUTCHours(23, 59, 59, 999)
+      }
+      if (expiry <= now) return NextResponse.json({ error: 'Activation end date must be in the future' }, { status: 400 })
+      const start = target.activationStartDate || now
+      if (expiry < start) return NextResponse.json({ error: 'Activation end date must be after its start date' }, { status: 400 })
+      const updated = await db.$transaction(async tx => {
+        const user = await tx.user.update({ where: { id: target.id }, data: { activationStartDate: start, activationExpiryDate: expiry } })
+        await tx.auditLog.create({ data: { action: 'TEACHER_ACTIVATION_EXTENDED', entityType: 'USER', entityId: target.id, schoolId: actor.schoolId!, userId: actor.id, changes: JSON.stringify({ previousStart: target.activationStartDate, previousExpiry: target.activationExpiryDate, activationStartDate: start, activationExpiryDate: expiry }), details: `Teacher activation updated for ${target.fullName}` } })
+        return user
+      })
+      return NextResponse.json({ message: 'Teacher activation updated successfully', user: sanitizeUser(updated as unknown as Record<string, unknown>) })
+    }
     if (!body.id || typeof body.active !== 'boolean') {
       return NextResponse.json({ error: 'User ID and active status are required' }, { status: 400 })
     }

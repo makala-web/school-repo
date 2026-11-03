@@ -7,8 +7,8 @@ import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { OfflineAssetWarmup } from "@/components/OfflineAssetWarmup";
 
 export const metadata: Metadata = {
-  title: "Shulea v2.0 - School Results Management",
-  description: "Offline School Results & Report Generator for Primary and Secondary Schools",
+  title: "Result Record Management System",
+  description: "Result Record Management System for school academic records and reports",
   icons: {
     icon: "/shulea-logo.png",
     apple: "/shulea-logo.png",

@@ -29,7 +29,14 @@ export async function getAuthenticatedUser(request: NextRequest) {
     where: { tokenHash: hashToken(token), revokedAt: null, expiresAt: { gt: new Date() } },
     include: { user: true },
   })
-  return session?.user?.active ? session.user : null
+  const user = session?.user
+  if (!user?.active) return null
+  if (user.role === 'TEACHER') {
+    const now = Date.now()
+    if (user.activationStartDate && new Date(user.activationStartDate).getTime() > now) return null
+    if (user.activationExpiryDate && new Date(user.activationExpiryDate).getTime() < now) return null
+  }
+  return user
 }
 
 /**
@@ -64,9 +71,10 @@ export async function canAccessClass(
     where: { teacherId: teacher.id, classId, schoolId: actor.schoolId, status: 'ACTIVE' },
     select: { id: true },
   })
-  // Class-teacher duties grant class administration, not blanket access to
-  // every subject's marks. Subject access is always checked separately.
-  if (classTeacherAssignment && !options.allowSubjectAssignment) return true
+  // A Class Teacher can access their class workspace. The broader option also
+  // admits subject teachers to class-scoped views, but never grants mark access
+  // by itself; mark routes still require an explicit TeacherSubject match.
+  if (classTeacherAssignment) return true
   if (!options.allowSubjectAssignment) return false
 
   const subjectAssignment = await db.teacherSubject.findFirst({
@@ -132,6 +140,11 @@ export async function getAuthorizedClassIds(
   const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
   if (!teacher) return []
   const classIds: string[] = []
+  const classTeacherAssignments = await db.classTeacherAssignment.findMany({
+    where: { teacherId: teacher.id, schoolId: actor.schoolId, status: 'ACTIVE' },
+    select: { classId: true },
+  })
+  classIds.push(...classTeacherAssignments.map(item => item.classId))
   if (options.allowSubjectAssignment) {
     const subjectAssignments = await db.teacherSubject.findMany({
       where: { teacherId: teacher.id, class: { schoolId: actor.schoolId }, subject: { schoolId: actor.schoolId } },

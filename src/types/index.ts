@@ -75,6 +75,8 @@ export interface User {
   fullName: string
   role: UserRole
   active: boolean
+  activationStartDate?: TimestampValue | null
+  activationExpiryDate?: TimestampValue | null
   schoolId?: string | null
   schoolType?: SchoolType | string | null
   securityQuestion?: string | null

@@ -15,6 +15,8 @@ export class SchemaManager {
       )
 
       await this.ensureColumn('User', 'schoolType', 'TEXT')
+      await this.ensureColumn('User', 'activationStartDate', 'TEXT')
+      await this.ensureColumn('User', 'activationExpiryDate', 'TEXT')
       await this.ensureColumn('MarksEntry', 'recordedByUserId', 'TEXT')
 
       // Index creation is also persisted once. IF NOT EXISTS keeps this safe

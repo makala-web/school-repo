@@ -4,6 +4,7 @@ import { validateRequired, validateLength, validateEnum, generateId } from '@/mo
 import type { Student, StudentWithClass } from '@/types'
 
 export interface CreateStudentInput {
+  id?: string
   fullName: string
   gender: 'M' | 'F'
   admissionNo?: string
@@ -293,6 +294,7 @@ export class StudentRepository {
     const { db: prismaDb } = await import('@/lib/db')
     const student = await prismaDb.student.create({
       data: {
+        ...(input.id ? { id: input.id } : {}),
         fullName: input.fullName,
         gender: input.gender,
         admissionNo,
@@ -321,7 +323,7 @@ export class StudentRepository {
     validateLength(input.fullName, 'Student name', 2, 100)
     validateEnum(input.gender, ['M', 'F'], 'Gender')
 
-    const id = generateId()
+    const id = input.id || generateId()
     const now = new Date().toISOString()
 
     await conn.execute(`
@@ -342,6 +344,7 @@ export class StudentRepository {
 
   // Bulk create students
   static async bulkCreate(students: Array<{
+    id?: string
     fullName: string
     gender: 'M' | 'F'
     admissionNo?: string
@@ -357,6 +360,7 @@ export class StudentRepository {
 
   private static async bulkCreatePrisma(
     students: Array<{
+      id?: string
       fullName: string
       gender: 'M' | 'F'
       admissionNo?: string
@@ -374,6 +378,7 @@ export class StudentRepository {
       const { db: prismaDb } = await import('@/lib/db')
       const record = await prismaDb.student.create({
         data: {
+          ...(student.id ? { id: student.id } : {}),
           fullName: student.fullName,
           gender: student.gender,
           admissionNo,
@@ -393,6 +398,7 @@ export class StudentRepository {
 
   private static async bulkCreateSQLite(
     students: Array<{
+      id?: string
       fullName: string
       gender: 'M' | 'F'
       admissionNo?: string
@@ -411,7 +417,7 @@ export class StudentRepository {
 
     for (const student of students) {
       const admissionNo = student.admissionNo?.trim() || await this.generateAdmissionNo(classId)
-      const id = crypto.randomUUID()
+      const id = student.id || crypto.randomUUID()
 
       queries.push({
         sql: `INSERT INTO Student (id, fullName, gender, admissionNo, dob, parentName, parentPhone, status, classId, schoolId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

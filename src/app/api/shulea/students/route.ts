@@ -301,6 +301,7 @@ async function handleFileUpload(formData: FormData) {
       return NextResponse.json({
         message: `${created.length} students imported from Excel`,
         imported: created.length,
+        studentIds: created.map(student => student.id),
         errors: errors.length > 0 ? errors : undefined,
       }, { status: 201 });
     }
@@ -325,9 +326,10 @@ async function handleCreateStudent(body: {
   schoolId: string;
   status?: string;
   autoAdmissionNo?: boolean;
+  id?: string;
   userId?: string;
 }) {
-  const { fullName, gender, admissionNo, dob, parentName, parentPhone, classId, schoolId, status, autoAdmissionNo, userId } = body;
+  const { id, fullName, gender, admissionNo, dob, parentName, parentPhone, classId, schoolId, status, autoAdmissionNo, userId } = body;
 
   if (!fullName || !gender || !classId || !schoolId) {
     return NextResponse.json(
@@ -365,6 +367,7 @@ async function handleCreateStudent(body: {
   }
 
   const student = await StudentRepository.create({
+    id,
     fullName,
     gender: gender as 'M' | 'F',
     admissionNo: finalAdmissionNo || undefined,
@@ -496,6 +499,7 @@ async function handleCsvUpload(body: {
   csvData: string;
   classId: string;
   schoolId: string;
+  studentIds?: string[];
 }) {
   const { csvData, classId, schoolId } = body;
 
@@ -615,6 +619,15 @@ async function handleCsvUpload(body: {
     }, { status: 400 });
   }
 
+  if (body.studentIds && body.studentIds.length !== validation.validStudents.length) {
+    return NextResponse.json({ error: 'Imported student identifiers do not match the validated rows' }, { status: 400 })
+  }
+  if (body.studentIds) {
+    validation.validStudents.forEach((student, index) => {
+      (student as { id?: string }).id = body.studentIds?.[index]
+    })
+  }
+
   // Create students in bulk with auto admission numbers
   const created = await StudentRepository.bulkCreate(validation.validStudents as Array<{
     fullName: string
@@ -628,6 +641,7 @@ async function handleCsvUpload(body: {
   return NextResponse.json({
     message: `${created.length} students imported successfully`,
     imported: created.length,
+    studentIds: created.map(student => student.id),
     errors: errors.length > 0 ? errors : undefined,
   }, { status: 201 });
 }

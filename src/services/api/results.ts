@@ -278,8 +278,7 @@ export const ResultsApi = {
       const conn = ConnectionManager
       const studentRows = await conn.query<Record<string, unknown>>(`
         SELECT s.*, c.id as class_id, c.name as class_name, c.fullName as class_fullName,
-          c.schoolType as class_schoolType, c.academicYear as class_academicYear, c.term as class_term,
-          c.classTeacherId as class_teacherId
+          c.schoolType as class_schoolType, c.academicYear as class_academicYear, c.term as class_term
         FROM Student s
         JOIN Class c ON s.classId = c.id
         WHERE s.id = ?
@@ -300,9 +299,13 @@ export const ResultsApi = {
         JOIN Teacher t ON ts.teacherId = t.id
         WHERE ts.classId = ?
       `, [student.classId])
-      const classTeacherRows = student.class_teacherId
-        ? await conn.query<Record<string, unknown>>('SELECT name, shortName, sign FROM Teacher WHERE id = ?', [student.class_teacherId])
-        : []
+      const classTeacherRows = await conn.query<Record<string, unknown>>(`
+        SELECT t.name, t.shortName, t.sign
+        FROM ClassTeacherAssignment a
+        JOIN Teacher t ON t.id = a.teacherId
+        WHERE a.schoolId = ? AND a.classId = ? AND a.academicYear = ? AND a.status = 'ACTIVE'
+        ORDER BY a.startDate DESC LIMIT 1
+      `, [student.schoolId, student.classId, exam.academicYear])
       const teacherMap = new Map(teacherRows.map(row => [row.subjectId as string, row.teacherName as string]))
 
       return ApiClient.success({

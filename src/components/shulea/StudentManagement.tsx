@@ -50,6 +50,7 @@ export default function StudentManagement() {
   const { currentSchool, schoolType, currentUser } = useAppStore()
   const [students, setStudents] = useState<Student[]>([])
   const [classes, setClasses] = useState<ClassItem[]>([])
+  const [classTeacherClassIds, setClassTeacherClassIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterClass, setFilterClass] = useState<string>('ALL')
@@ -129,6 +130,18 @@ export default function StudentManagement() {
       ])
       setStudents(studentsData.students || [])
       setClasses(classesData.classes || [])
+      if (currentUser?.role === 'TEACHER' && currentUser.schoolId) {
+        const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${currentUser.schoolId}`)
+        const teacherId = teacherData.teachers?.[0]?.id
+        if (teacherId) {
+          const assignmentData = await apiCall(`/api/shulea/teacher-classes?teacherId=${teacherId}&schoolId=${currentUser.schoolId}&actorUserId=${currentUser.id}`)
+          setClassTeacherClassIds((assignmentData.classTeacherAssignments || []).map((item: { id: string }) => item.id))
+        } else {
+          setClassTeacherClassIds([])
+        }
+      } else {
+        setClassTeacherClassIds([])
+      }
       const loadedClasses: ClassItem[] = classesData.classes || []
       const modeClassesFromLoad = loadedClasses.filter(c => c.schoolType === schoolType)
       if (modeClassesFromLoad.length > 0 && !formClassId) {
@@ -329,6 +342,12 @@ export default function StudentManagement() {
 
   // Filter classes to only show current school type
   const modeClasses = classes.filter(c => c.schoolType === schoolType)
+  const isSchoolAdmin = currentUser?.role === 'SCHOOL_ADMIN'
+  const isClassTeacher = currentUser?.role === 'TEACHER' && classTeacherClassIds.length > 0
+  const canManageStudents = isSchoolAdmin || isClassTeacher
+  const manageableClasses = isSchoolAdmin
+    ? modeClasses
+    : modeClasses.filter(item => classTeacherClassIds.includes(item.id))
 
   const filteredStudents = students.filter((s) => {
     const matchesSearch = s.fullName.toLowerCase().includes(search.toLowerCase()) ||
@@ -382,12 +401,12 @@ export default function StudentManagement() {
           <h2 className="text-xl font-bold text-gray-900">Students</h2>
           <p className="text-sm text-muted-foreground">{students.length} students registered</p>
         </div>
-        <div className="flex gap-2">
+        {canManageStudents && <div className="flex gap-2">
           <Button variant="outline" onClick={() => {
             setCsvDialogOpen(true)
             setCsvResult(null)
             setCsvData('')
-            setCsvClassId(modeClasses[0]?.id || '')
+            setCsvClassId(manageableClasses[0]?.id || '')
           }} className="gap-2">
             <Upload className="w-4 h-4" />
             Import
@@ -396,7 +415,7 @@ export default function StudentManagement() {
             <UserPlus className="w-4 h-4" />
             Add Student
           </Button>
-        </div>
+        </div>}
       </div>
 
       {/* Filters */}
@@ -418,7 +437,7 @@ export default function StudentManagement() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All Classes</SelectItem>
-                {modeClasses.map((c) => (
+                {(currentUser?.role === 'TEACHER' ? manageableClasses : modeClasses).map((c) => (
                   <SelectItem key={c.id} value={c.id}>{c.fullName}</SelectItem>
                 ))}
               </SelectContent>
@@ -501,6 +520,7 @@ export default function StudentManagement() {
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap" data-label="Actions">
                         <div className="flex items-center justify-end gap-1">
+                          {canManageStudents && (isSchoolAdmin || classTeacherClassIds.includes(student.classId)) && <>
                           <Button 
                             variant="ghost" 
                             size="sm" 
@@ -510,6 +530,7 @@ export default function StudentManagement() {
                           >
                             <Pencil className="w-4 h-4" />
                           </Button>
+                          </>}
                           <Button 
                             variant="ghost" 
                             size="sm"
@@ -584,7 +605,7 @@ export default function StudentManagement() {
                       <SelectValue placeholder="Select class" />
                     </SelectTrigger>
                     <SelectContent>
-                      {modeClasses.map((c) => (
+                      {manageableClasses.map((c) => (
                         <SelectItem key={c.id} value={c.id}>{c.fullName}</SelectItem>
                       ))}
                     </SelectContent>
@@ -705,7 +726,7 @@ export default function StudentManagement() {
                   <SelectValue placeholder="Select class" />
                 </SelectTrigger>
                 <SelectContent>
-                  {modeClasses.map((c) => (
+                  {manageableClasses.map((c) => (
                     <SelectItem key={c.id} value={c.id}>{c.fullName}</SelectItem>
                   ))}
                 </SelectContent>

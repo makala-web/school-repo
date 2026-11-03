@@ -1348,9 +1348,9 @@ export function generateReportCardHtml(params: {
   
   // Signatures
   const classTeacherSig = autoSig(
-    classTeacher?.name || school.classTeacherName,
-    classTeacher?.shortName || school.classTeacherShortName,
-    classTeacher?.sign || school.classTeacherShortName
+    classTeacher?.name,
+    classTeacher?.shortName,
+    classTeacher?.sign
   )
   const headTeacherSig = autoSig(school.headTeacherName, null, school.headTeacherSign)
   

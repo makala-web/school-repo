@@ -13,6 +13,8 @@ type OfflineUser = StoreUser & {
   deviceId?: string | null
   createdAt?: string
   updatedAt?: string
+  activationStartDate?: string | null
+  activationExpiryDate?: string | null
 }
 
 function bytesToBase64(bytes: Uint8Array) {
@@ -137,9 +139,9 @@ async function upsertOfflineUser(user: OfflineUser, passwordVerifier: string) {
   }
 
   await ConnectionManager.execute(
-    `INSERT INTO User (id, email, username, password, fullName, role, active, schoolId, schoolType, isDemoUser, deviceId, lastSchoolAccessAt, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET email = excluded.email, username = excluded.username, password = excluded.password, fullName = excluded.fullName, role = excluded.role, active = excluded.active, schoolId = excluded.schoolId, schoolType = excluded.schoolType, isDemoUser = excluded.isDemoUser, deviceId = excluded.deviceId, lastSchoolAccessAt = excluded.lastSchoolAccessAt, updatedAt = excluded.updatedAt`,
+    `INSERT INTO User (id, email, username, password, fullName, role, active, schoolId, schoolType, activationStartDate, activationExpiryDate, isDemoUser, deviceId, lastSchoolAccessAt, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET email = excluded.email, username = excluded.username, password = excluded.password, fullName = excluded.fullName, role = excluded.role, active = excluded.active, schoolId = excluded.schoolId, schoolType = excluded.schoolType, activationStartDate = excluded.activationStartDate, activationExpiryDate = excluded.activationExpiryDate, isDemoUser = excluded.isDemoUser, deviceId = excluded.deviceId, lastSchoolAccessAt = excluded.lastSchoolAccessAt, updatedAt = excluded.updatedAt`,
     [
       user.id,
       user.email,
@@ -150,6 +152,8 @@ async function upsertOfflineUser(user: OfflineUser, passwordVerifier: string) {
       user.active === false ? 0 : 1,
       user.schoolId || school?.id || null,
       schoolType,
+      user.activationStartDate || null,
+      user.activationExpiryDate || null,
       user.isDemoUser ? 1 : 0,
       user.deviceId || null,
       now,

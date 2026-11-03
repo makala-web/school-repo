@@ -640,9 +640,9 @@ async function handleReportCard(searchParams: URLSearchParams) {
     },
   });
 
-  // Get school leadership and report templates. Class teacher is derived from
-  // the assignment register for this class and academic year; the legacy
-  // Class.classTeacherId remains only as a compatibility fallback.
+  // Class teacher identity and signature must come from the assignment for
+  // this class and the exam's academic year. The class-level legacy pointer
+  // cannot safely identify an assignment for a historical report year.
   const school = student.class.school;
   const reportSchool = fillDefaultReportComments(school);
   const classTeacherAssignment = await db.classTeacherAssignment.findFirst({
@@ -655,7 +655,7 @@ async function handleReportCard(searchParams: URLSearchParams) {
     orderBy: { startDate: 'desc' },
     include: { teacher: { select: { name: true, shortName: true, sign: true } } },
   });
-  const assignedClassTeacher = classTeacherAssignment?.teacher || student.class.classTeacher;
+  const assignedClassTeacher = classTeacherAssignment?.teacher || null;
 
   // Build subject marks with positions
   const subjectMarks = marks.map(m => ({

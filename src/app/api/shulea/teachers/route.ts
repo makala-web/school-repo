@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       where,
       include: {
       school: { select: { name: true } },
-        user: { select: { id: true, email: true, fullName: true, role: true, active: true } },
+        user: { select: { id: true, email: true, fullName: true, role: true, active: true, activationStartDate: true, activationExpiryDate: true } },
         subjectClasses: {
           include: {
             subject: { select: { name: true, shortName: true } },

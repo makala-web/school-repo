@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
           },
           email: invitation.email,
           fullName: invitation.fullName,
+          teacherShortName: invitation.teacherShortName,
           role: invitation.role,
           status: invitation.status,
           expiresAt: invitation.expiresAt,
@@ -81,6 +82,7 @@ export async function GET(request: NextRequest) {
           inviteCode: inv.inviteCode,
           email: inv.email,
           fullName: inv.fullName,
+          teacherShortName: inv.teacherShortName,
           role: inv.role,
           status: inv.status,
           expiresAt: inv.expiresAt,
@@ -104,7 +106,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { action, schoolId, inviteCode, email, fullName, role, assignedClasses, assignedSubjects, assignedTeacherSubjects, expiryDays } = body
+    const { action, schoolId, inviteCode, email, fullName, teacherShortName, role, assignedClasses, assignedSubjects, assignedTeacherSubjects, expiryDays } = body
 
     if (action === 'create-invitation') {
       // Create teacher invitation
@@ -187,6 +189,7 @@ export async function POST(request: NextRequest) {
           senderId: user.id,
           email,
           fullName: fullName || null,
+          teacherShortName: requestedRole === 'TEACHER' && typeof teacherShortName === 'string' ? teacherShortName.trim().slice(0, 60) || null : null,
           role: requestedRole,
           assignedClasses: JSON.stringify(requestedClassIds),
           assignedSubjects: JSON.stringify(requestedSubjectIds),
@@ -204,6 +207,7 @@ export async function POST(request: NextRequest) {
           inviteCode: invitation.inviteCode,
           email: invitation.email,
           fullName: invitation.fullName,
+          teacherShortName: invitation.teacherShortName,
           role: invitation.role,
           expiresAt: invitation.expiresAt,
           assignedClasses: invitation.assignedClasses ? JSON.parse(invitation.assignedClasses) : [],
@@ -261,8 +265,8 @@ export async function POST(request: NextRequest) {
       const teacher = invitation.role === 'TEACHER'
         ? await db.teacher.upsert({
             where: { userId: user.id },
-            update: { name: user.fullName, schoolId: invitation.schoolId },
-            create: { name: user.fullName, schoolId: invitation.schoolId, userId: user.id },
+            update: { name: user.fullName, shortName: invitation.teacherShortName || null, schoolId: invitation.schoolId },
+            create: { name: user.fullName, shortName: invitation.teacherShortName || null, schoolId: invitation.schoolId, userId: user.id },
           })
         : null
 

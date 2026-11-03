@@ -70,6 +70,8 @@ export const TABLES = {
       fullName TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'TEACHER',
       active INTEGER NOT NULL DEFAULT 1,
+        activationStartDate TEXT,
+        activationExpiryDate TEXT,
       schoolId TEXT,
       schoolType TEXT,
       securityQuestion TEXT,

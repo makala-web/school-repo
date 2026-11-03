@@ -89,6 +89,22 @@ async function resolveTargets(
 ): Promise<SyncTarget[]> {
   const path = endpoint.split('?')[0]
 
+  if (method !== 'DELETE' && path === '/api/shulea/students') {
+    const response = jsonValue(responseText)
+    const responseIds = response && typeof response === 'object' && Array.isArray((response as Record<string, unknown>).studentIds)
+      ? (response as Record<string, unknown>).studentIds as unknown[]
+      : []
+    const ids = [...new Set([
+      ...(typeof body.id === 'string' ? [body.id] : []),
+      ...(Array.isArray(body.studentIds) ? body.studentIds.filter((id): id is string => typeof id === 'string') : []),
+      ...responseIds.filter((id): id is string => typeof id === 'string'),
+    ])]
+    if (ids.length) {
+      const rows = await db.student.findMany({ where: { id: { in: ids }, schoolId } })
+      return rows.map(row => ({ entityType: 'STUDENT', entityId: row.id, payload: JSON.stringify(row) }))
+    }
+  }
+
   if (method !== 'DELETE' && path === '/api/shulea/attendance' && Array.isArray(body.records)) {
     const classId = typeof body.classId === 'string' ? body.classId : null
     const date = typeof body.date === 'string' ? body.date : null

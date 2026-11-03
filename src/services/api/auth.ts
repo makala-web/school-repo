@@ -90,6 +90,11 @@ export const AuthApi = {
       if (!user.active) {
         return ApiClient.error('Account is deactivated')
       }
+      if (user.role === 'TEACHER') {
+        const now = Date.now()
+        if (user.activationStartDate && new Date(user.activationStartDate).getTime() > now) return ApiClient.error('Teacher activation has not started yet')
+        if (user.activationExpiryDate && new Date(user.activationExpiryDate).getTime() < now) return ApiClient.error('Teacher activation has expired. Connect to the internet and contact your School Admin.')
+      }
 
       if (user.schoolId && (!user.school || !user.school.id)) {
         const school = await SchoolRepository.getById(user.schoolId)

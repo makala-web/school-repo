@@ -95,6 +95,8 @@ model User {
   fullName           String
   role               String    @default("TEACHER") // TEACHER, SCHOOL_ADMIN, SUPER_ADMIN
   active             Boolean   @default(true)
+    activationStartDate DateTime?
+    activationExpiryDate DateTime?
   schoolId           String?
   schoolType         String? // PRIMARY or SECONDARY - selected during registration
   securityQuestion   String? // e.g. "What is your nickname?"
@@ -164,6 +166,7 @@ model Invitation {
   receiverId       String?   @unique // User who accepted invitation
   email            String
   fullName         String?
+    teacherShortName String?
   role             String    @default("TEACHER")
   assignedClasses  String // JSON string of class IDs
   assignedSubjects String // JSON string of subject IDs
@@ -475,7 +478,9 @@ model ClassTeacherAssignment {
   class   Class   @relation("ClassTeacherAssignments", fields: [classId], references: [id], onDelete: Cascade)
   teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
 
-  @@unique([schoolId, classId, academicYear, status])
+  // A partial database index enforces one ACTIVE assignment while allowing
+  // multiple historical INACTIVE assignments for the same class and year.
+  @@index([schoolId, classId, academicYear, status])
   @@index([schoolId])
   @@index([classId])
   @@index([teacherId])

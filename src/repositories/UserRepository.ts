@@ -586,6 +586,8 @@ export class UserRepository {
       isDemoUser: Boolean(row.isDemoUser),
       deviceId: row.deviceId as string | null,
       lastSchoolAccessAt: row.lastSchoolAccessAt as string | null,
+      activationStartDate: row.activationStartDate as string | null,
+      activationExpiryDate: row.activationExpiryDate as string | null,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
       school: row.school_id ? {

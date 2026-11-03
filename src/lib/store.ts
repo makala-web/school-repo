@@ -133,6 +133,8 @@ export interface User {
   schoolId?: string
   schoolType?: SchoolType | string | null
   isDemoUser?: boolean
+  activationStartDate?: string | null
+  activationExpiryDate?: string | null
   school?: Partial<SchoolInfo> | null
 }
 

@@ -100,6 +100,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (error) {
     console.error('Class teacher assignment error:', error);
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {
+      return NextResponse.json({ error: 'A class teacher was assigned to this class and academic year concurrently. Reload assignments and try again.' }, { status: 409 })
+    }
     return NextResponse.json(
       { error: 'Failed to process assignment' },
       { status: 500 }
@@ -146,70 +149,48 @@ async function handleAssignClassTeacher(data: {
     );
   }
 
-  // Check for existing active assignment for this class+year
-  const existingActive = await db.classTeacherAssignment.findFirst({
-    where: {
-      schoolId,
-      classId,
-      academicYear,
-      status: 'ACTIVE'
+  const today = new Date().toISOString().slice(0, 10)
+  const result = await db.$transaction(async (tx) => {
+    const existingActive = await tx.classTeacherAssignment.findFirst({
+      where: { schoolId, classId, academicYear, status: 'ACTIVE' },
+    })
+    if (existingActive?.teacherId === teacherId) return { assignment: existingActive, alreadyExists: true }
+
+    if (existingActive) {
+      await tx.classTeacherAssignment.update({
+        where: { id: existingActive.id },
+        data: { status: 'INACTIVE', endDate: today },
+      })
     }
-  });
-
-  if (existingActive && existingActive.teacherId !== teacherId) {
-    // Mark previous assignment as inactive
-    await db.classTeacherAssignment.update({
-      where: { id: existingActive.id },
-      data: { 
-        status: 'INACTIVE',
-        endDate: new Date().toISOString().split('T')[0]
-      }
-    });
-  }
-
-  if (existingActive && existingActive.teacherId === teacherId) {
-    return NextResponse.json({
-      message: 'This teacher is already assigned to the selected class for this academic year.',
-      assignment: existingActive,
-      alreadyExists: true,
-    });
-  }
-
-  // Create new assignment
-  const assignment = await db.classTeacherAssignment.create({
-    data: {
-      ...(id ? { id } : {}),
-      schoolId,
-      classId,
-      teacherId,
-      academicYear,
-      startDate,
-      status: 'ACTIVE'
-    },
-    include: {
-      class: true,
-      teacher: { select: { id: true, name: true, shortName: true, sign: true, phone: true, schoolId: true, userId: true } },
-      school: true
+    const assignment = await tx.classTeacherAssignment.create({
+      data: { ...(id ? { id } : {}), schoolId, classId, teacherId, academicYear, startDate, status: 'ACTIVE' },
+      include: {
+        class: true,
+        teacher: { select: { id: true, name: true, shortName: true, sign: true, phone: true, schoolId: true, userId: true } },
+        school: true,
+      },
+    })
+    // Keep the legacy field aligned only with the school's current academic year.
+    const school = await tx.school.findUnique({ where: { id: schoolId }, select: { academicYear: true } })
+    if (!school?.academicYear || school.academicYear === academicYear) {
+      await tx.class.update({ where: { id: classId }, data: { classTeacherId: teacherId } })
     }
-  });
+    await tx.auditLog.create({
+      data: {
+        action: 'CLASS_TEACHER_ASSIGNED', entityType: 'CLASS_TEACHER_ASSIGNMENT',
+        entityId: assignment.id, schoolId, userId: actor.id,
+        details: `${teacher.name} assigned as class teacher for ${classRecord.fullName} (${academicYear})`,
+      },
+    })
+    return { assignment, alreadyExists: false }
+  })
 
-  // Update legacy classTeacherId field on Class model for backward compatibility
-  await db.class.update({
-    where: { id: classId },
-    data: { classTeacherId: teacherId }
-  });
-
-  // Log audit
-  await db.auditLog.create({
-    data: {
-      action: 'CLASS_TEACHER_ASSIGNED',
-      entityType: 'CLASS_TEACHER_ASSIGNMENT',
-      entityId: assignment.id,
-      schoolId,
-      userId: actor.id,
-      details: `${teacher.name} assigned as class teacher for ${classRecord.fullName}`
-    }
-  });
+  const { assignment, alreadyExists } = result
+  if (alreadyExists) return NextResponse.json({
+    message: 'This teacher is already assigned to the selected class for this academic year.',
+    assignment,
+    alreadyExists: true,
+  })
 
   return NextResponse.json({
     message: 'Class teacher assigned successfully',
@@ -255,8 +236,9 @@ async function handleUpdateAssignment(data: {
     }
   }
 
-  if (updateData.status === 'ACTIVE') {
-    const existingActive = await db.classTeacherAssignment.findFirst({
+  const result = await db.$transaction(async (tx) => {
+  if (updateData.status === 'ACTIVE' || (assignment.status === 'ACTIVE' && updateData.teacherId)) {
+    const existingActive = await tx.classTeacherAssignment.findFirst({
       where: {
         schoolId: assignment.schoolId,
         classId: assignment.classId,
@@ -266,14 +248,14 @@ async function handleUpdateAssignment(data: {
       },
     })
     if (existingActive) {
-      await db.classTeacherAssignment.update({
+      await tx.classTeacherAssignment.update({
         where: { id: existingActive.id },
         data: { status: 'INACTIVE', endDate: new Date().toISOString().split('T')[0] },
       })
     }
   }
 
-  const updated = await db.classTeacherAssignment.update({
+  const updated = await tx.classTeacherAssignment.update({
     where: { id: assignmentId },
     data: updateData,
     include: {
@@ -283,8 +265,15 @@ async function handleUpdateAssignment(data: {
     }
   });
 
-  // Log audit
-  await db.auditLog.create({
+  const nextActiveAssignment = await tx.classTeacherAssignment.findFirst({
+    where: { classId: assignment.classId, schoolId: assignment.schoolId, academicYear: assignment.academicYear, status: 'ACTIVE' },
+    select: { teacherId: true },
+  })
+  const school = await tx.school.findUnique({ where: { id: assignment.schoolId }, select: { academicYear: true } })
+  if (!school?.academicYear || school.academicYear === assignment.academicYear) {
+    await tx.class.update({ where: { id: assignment.classId }, data: { classTeacherId: nextActiveAssignment?.teacherId || null } })
+  }
+  await tx.auditLog.create({
     data: {
       action: 'CLASS_TEACHER_ASSIGNMENT_UPDATED',
       entityType: 'CLASS_TEACHER_ASSIGNMENT',
@@ -294,10 +283,12 @@ async function handleUpdateAssignment(data: {
       details: `Assignment updated: ${JSON.stringify(updateData)}`
     }
   });
+  return updated
+  })
 
   return NextResponse.json({
     message: 'Assignment updated successfully',
-    assignment: updated
+    assignment: result
   });
 }
 
@@ -322,32 +313,25 @@ async function handleRemoveAssignment(data: {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
-  // Mark as inactive instead of deleting
-  const updated = await db.classTeacherAssignment.update({
-    where: { id: assignmentId },
-    data: {
-      status: 'INACTIVE',
-      endDate: new Date().toISOString().split('T')[0]
-    },
-    include: {
-      class: true,
-      teacher: { select: { id: true, name: true, shortName: true, sign: true, phone: true, schoolId: true, userId: true } },
-      school: true
+  const updated = await db.$transaction(async (tx) => {
+    const removed = await tx.classTeacherAssignment.update({
+      where: { id: assignmentId },
+      data: { status: 'INACTIVE', endDate: new Date().toISOString().slice(0, 10) },
+      include: {
+        class: true,
+        teacher: { select: { id: true, name: true, shortName: true, sign: true, phone: true, schoolId: true, userId: true } },
+        school: true,
+      },
+    })
+    const nextActiveAssignment = await tx.classTeacherAssignment.findFirst({
+      where: { classId: assignment.classId, schoolId: assignment.schoolId, academicYear: assignment.academicYear, status: 'ACTIVE' },
+      select: { teacherId: true },
+    })
+    const school = await tx.school.findUnique({ where: { id: assignment.schoolId }, select: { academicYear: true } })
+    if (!school?.academicYear || school.academicYear === assignment.academicYear) {
+      await tx.class.update({ where: { id: assignment.classId }, data: { classTeacherId: nextActiveAssignment?.teacherId || null } })
     }
-  });
-
-  // Clear classTeacherId on Class model
-  const nextActiveAssignment = await db.classTeacherAssignment.findFirst({
-    where: { classId: assignment.classId, schoolId: assignment.schoolId, status: 'ACTIVE' },
-    select: { teacherId: true },
-  })
-  await db.class.update({
-    where: { id: assignment.classId },
-    data: { classTeacherId: nextActiveAssignment?.teacherId || null }
-  });
-
-  // Log audit
-  await db.auditLog.create({
+    await tx.auditLog.create({
     data: {
       action: 'CLASS_TEACHER_ASSIGNMENT_REMOVED',
       entityType: 'CLASS_TEACHER_ASSIGNMENT',
@@ -356,7 +340,9 @@ async function handleRemoveAssignment(data: {
       userId: actor.id,
       details: `Class teacher assignment removed`
     }
-  });
+    })
+    return removed
+  })
 
   return NextResponse.json({
     message: 'Assignment removed successfully',

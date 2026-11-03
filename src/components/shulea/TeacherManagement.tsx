@@ -34,6 +34,8 @@ interface Teacher {
     fullName: string
     role: string
     active: boolean
+    activationStartDate?: string | null
+    activationExpiryDate?: string | null
   }
   subjectClasses?: {
     id: string
@@ -50,6 +52,7 @@ interface Invitation {
   inviteCode: string
   email: string
   fullName?: string
+    teacherShortName?: string | null
   role: string
   status: string
   expiresAt: string
@@ -80,6 +83,7 @@ export default function TeacherManagement() {
   const [inviteForm, setInviteForm] = useState({
     email: '',
     fullName: '',
+    teacherShortName: '',
     role: 'TEACHER',
     expiryDays: '7'
     , assignmentsByClass: {} as Record<string, string[]>
@@ -90,6 +94,10 @@ export default function TeacherManagement() {
   const [assignmentClassId, setAssignmentClassId] = useState('')
   const [assignmentSubjectIds, setAssignmentSubjectIds] = useState<string[]>([])
   const [savingAssignments, setSavingAssignments] = useState(false)
+  const [activationTeacher, setActivationTeacher] = useState<Teacher | null>(null)
+  const [activationAmount, setActivationAmount] = useState('30')
+  const [activationUnit, setActivationUnit] = useState<'DAYS' | 'MONTHS'>('DAYS')
+  const [activationDate, setActivationDate] = useState('')
 
   useEffect(() => {
     loadData()
@@ -149,6 +157,7 @@ export default function TeacherManagement() {
           userId: currentUser?.id,
           email: inviteForm.email,
           fullName: inviteForm.fullName || undefined,
+          teacherShortName: inviteForm.teacherShortName || undefined,
           role: inviteForm.role,
           expiryDays: parseInt(inviteForm.expiryDays),
           assignedTeacherSubjects: Object.entries(inviteForm.assignmentsByClass).flatMap(([classId, subjectIds]) => subjectIds.map(subjectId => ({ classId, subjectId }))),
@@ -158,7 +167,7 @@ export default function TeacherManagement() {
       const assignmentCount = Object.values(inviteForm.assignmentsByClass).reduce((count, ids) => count + ids.length, 0)
       toast.success(`Invitation saved with ${assignmentCount} class-subject assignment${assignmentCount === 1 ? '' : 's'}. They activate when the teacher accepts. Share code ${data.invitation?.inviteCode || ''}.`)
       setInviteDialog(false)
-      setInviteForm({ email: '', fullName: '', role: 'TEACHER', expiryDays: '7', assignmentsByClass: {} })
+      setInviteForm({ email: '', fullName: '', teacherShortName: '', role: 'TEACHER', expiryDays: '7', assignmentsByClass: {} })
       loadData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to create invitation')
@@ -220,6 +229,19 @@ export default function TeacherManagement() {
       toast.error(err instanceof Error ? err.message : 'Failed to update teacher assignments')
     } finally {
       setSavingAssignments(false)
+    }
+  }
+
+  async function saveActivation() {
+    if (!activationTeacher?.userId || !currentUser?.id) return
+    try {
+      await apiCall('/api/shulea/users', { method: 'PUT', body: JSON.stringify({ action: 'extend-teacher-activation', id: activationTeacher.userId, durationAmount: Number(activationAmount), durationUnit: activationUnit, ...(activationDate ? { expiryDate: activationDate } : {}) }) })
+      toast.success('Teacher activation updated')
+      setActivationTeacher(null)
+      setActivationDate('')
+      await loadData()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update teacher activation')
     }
   }
 
@@ -318,6 +340,7 @@ export default function TeacherManagement() {
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Activation</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -344,6 +367,10 @@ export default function TeacherManagement() {
                         ) : (
                           <Badge className="bg-red-100 text-red-700 border-red-200">Inactive</Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {teacher.user?.activationStartDate ? `From ${formatDate(teacher.user.activationStartDate)} · ` : 'Start on first activation · '}{teacher.user?.activationExpiryDate ? `Ends ${formatDate(teacher.user.activationExpiryDate)}` : 'No expiry set'}
+                        {teacher.userId && <Button variant="link" size="sm" className="px-1" onClick={() => setActivationTeacher(teacher)}>Extend / set</Button>}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(teacher)}>
@@ -476,6 +503,19 @@ export default function TeacherManagement() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(activationTeacher)} onOpenChange={open => { if (!open) setActivationTeacher(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Teacher activation</DialogTitle><DialogDescription>Extend the existing account without sending another invitation.</DialogDescription></DialogHeader>
+          <p className="text-sm">{activationTeacher?.name} · starts {activationTeacher?.user?.activationStartDate ? formatDate(activationTeacher.user.activationStartDate) : 'when first activated'} · currently ends {activationTeacher?.user?.activationExpiryDate ? formatDate(activationTeacher.user.activationExpiryDate) : 'no expiry'}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2"><Label htmlFor="activation-amount">Extend by</Label><Input id="activation-amount" type="number" min="1" value={activationAmount} onChange={e => setActivationAmount(e.target.value)} /></div>
+            <div className="space-y-2"><Label htmlFor="activation-unit">Unit</Label><select id="activation-unit" value={activationUnit} onChange={e => setActivationUnit(e.target.value as 'DAYS' | 'MONTHS')} className="w-full rounded-md border px-3 py-2"><option value="DAYS">Days</option><option value="MONTHS">Months</option></select></div>
+          </div>
+          <div className="space-y-2"><Label htmlFor="activation-date">Or set exact end date</Label><Input id="activation-date" type="date" value={activationDate} onChange={e => setActivationDate(e.target.value)} /></div>
+          <DialogFooter><Button variant="outline" onClick={() => setActivationTeacher(null)}>Cancel</Button><Button onClick={saveActivation}>Save activation</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Invite Dialog */}
       <Dialog open={inviteDialog} onOpenChange={setInviteDialog}>
         <DialogContent>
@@ -506,6 +546,12 @@ export default function TeacherManagement() {
                 value={inviteForm.fullName}
                 onChange={(e) => setInviteForm({ ...inviteForm, fullName: e.target.value })}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="invite-signature">Teacher report signature</Label>
+              <Input id="invite-signature" placeholder="A. Hamza" maxLength={60} value={inviteForm.teacherShortName} onChange={(e) => setInviteForm({ ...inviteForm, teacherShortName: e.target.value })} />
+              <p className="text-xs text-muted-foreground">This short name is used as the teacher signature on reports.</p>
             </div>
 
             <div className="space-y-2">

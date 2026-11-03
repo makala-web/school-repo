@@ -1831,17 +1831,14 @@ export default function ReportsView() {
 
     // Helper: Get class teacher signature
     const getClassTeacherSignature = (): string => {
-      // Priority: class teacher short name > Settings short name > auto-generated from name
-      if (rcClassTeacher?.shortName) return rcClassTeacher.shortName
       if (rcClassTeacher?.sign) return rcClassTeacher.sign
-      if (rcSchool.classTeacherShortName) return rcSchool.classTeacherShortName
-      if (rcSchool.classTeacherName) {
-        // Auto-generate from name: "Ramadhan Aweso" -> "R. Aweso"
-        const parts = rcSchool.classTeacherName.trim().split(/\s+/)
+      if (rcClassTeacher?.shortName) return rcClassTeacher.shortName
+      if (rcClassTeacher?.name) {
+        const parts = rcClassTeacher.name.trim().split(/\s+/)
         if (parts.length >= 2) {
           return `${parts[0].charAt(0).toUpperCase()}. ${parts[parts.length - 1]}`
         }
-        return rcSchool.classTeacherName
+        return rcClassTeacher.name
       }
       return '________________'
     }
