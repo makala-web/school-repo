@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { apiCall } from '@/lib/utils'
 import {
-  Users, School, BookOpen, UserCog, PenTool, FileText, TrendingUp, Award, MessageSquare, ShieldCheck, HardDrive, Download
+  Users, School, BookOpen, UserCog, PenTool, FileText, TrendingUp, Award, MessageSquare, ShieldCheck, HardDrive, Download, CalendarCheck, Heart
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -29,7 +29,6 @@ interface TeacherWorkspace {
   classes: { id: string; name: string; fullName?: string; studentCount: number; role: string; subjects?: Array<{ id: string; name: string; shortName?: string | null }> }[]
   students: { id: string; fullName: string; class?: { fullName?: string } }[]
   subjects: string[]
-  isHeadTeacher: boolean
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -86,13 +85,24 @@ export default function Dashboard() {
     console.log('[DASHBOARD] Loading dashboard. School:', currentSchool?.id, 'Type:', schoolType, 'User:', currentUser?.id)
     setLoading(true)
     try {
-      const schoolIdParam = currentSchool?.id ? `&schoolId=${currentSchool.id}` : ''
-      const schoolTypeParam = schoolType ? `&schoolType=${schoolType}` : ''
-      const data = await apiCall(`/api/shulea/backup?action=stats${schoolIdParam}${schoolTypeParam}`)
-      console.log('[DASHBOARD] Stats loaded:', data.stats)
-      setStats(data.stats)
-
-      if (currentUser?.role === 'TEACHER' && currentSchool?.id) {
+      if (currentUser?.role === 'SCHOOL_ADMIN' && currentSchool?.id) {
+        const data = await apiCall(`/api/shulea/backup?action=stats&schoolId=${encodeURIComponent(currentSchool.id)}${schoolType ? `&schoolType=${schoolType}` : ''}`)
+        setStats(data.stats)
+        if (data.stats?.studentResults > 0) {
+          const examsData = await apiCall(`/api/shulea/exams?schoolId=${currentSchool.id}`)
+          const latestExam = (examsData.exams || []).sort((a: any, b: any) => String(b.examDate || b.createdAt || '').localeCompare(String(a.examDate || a.createdAt || '')))[0]
+          if (latestExam) {
+            const resultsData = await apiCall(`/api/shulea/results?examId=${latestExam.id}`)
+            const latestResults = resultsData.results || []
+            setGradeDistribution(buildGradeDistribution(latestResults, schoolType === 'SECONDARY'))
+            setTopStudents(latestResults.slice(0, 5).map((result: any) => ({
+              name: result.student?.fullName || 'Student',
+              average: Number(result.averageMarks || 0),
+              grade: result.grade || 'N/A',
+            })))
+          }
+        }
+      } else if (currentUser?.role === 'TEACHER' && currentSchool?.id) {
         const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${currentSchool.id}`)
         const teacher = (teacherData.teachers || []).find((item: any) => item.userId === currentUser.id || item.user?.id === currentUser.id)
         if (teacher) {
@@ -106,25 +116,14 @@ export default function Dashboard() {
             classes: assignedClasses,
             students: studentData.students || [],
             subjects: Array.from(new Set(assignedSubjects)),
-            isHeadTeacher: Boolean(classData.teacher?.isHeadTeacher),
           })
 
-          const teacherResults = (studentData.students || []).flatMap((student: any) => student.results || [])
-          setGradeDistribution(buildGradeDistribution(teacherResults, schoolType === 'SECONDARY'))
-          setTopStudents(buildTopStudents(teacherResults, studentData.students || []))
-        }
-      } else if (currentSchool?.id && data.stats?.studentResults > 0) {
-        const examsData = await apiCall(`/api/shulea/exams?schoolId=${currentSchool.id}`)
-        const latestExam = (examsData.exams || []).sort((a: any, b: any) => String(b.examDate || b.createdAt || '').localeCompare(String(a.examDate || a.createdAt || '')))[0]
-        if (latestExam) {
-          const resultsData = await apiCall(`/api/shulea/results?examId=${latestExam.id}`)
-          const latestResults = resultsData.results || []
-          setGradeDistribution(buildGradeDistribution(latestResults, schoolType === 'SECONDARY'))
-          setTopStudents(latestResults.slice(0, 5).map((result: any) => ({
-            name: result.student?.fullName || 'Student',
-            average: Number(result.averageMarks || 0),
-            grade: result.grade || 'N/A',
-          })))
+          if ((assignedClasses || []).some((item: { role: string }) => item.role === 'CLASS_TEACHER')) {
+            const resultsData = await apiCall(`/api/shulea/teacher-results?teacherId=${teacher.id}&schoolId=${currentSchool.id}&actorUserId=${currentUser.id}`)
+            const results = resultsData.results || []
+            setGradeDistribution(buildGradeDistribution(results, schoolType === 'SECONDARY'))
+            setTopStudents(buildTopStudents(results, studentData.students || []))
+          }
         }
       }
     } catch {
@@ -134,12 +133,21 @@ export default function Dashboard() {
     }
   }
 
-  const statCards = [
-    { label: 'Total Students', value: stats?.students ?? 0, icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    { label: 'Total Classes', value: stats?.classes ?? 0, icon: School, color: 'text-teal-600', bg: 'bg-teal-50' },
-    { label: 'Total Subjects', value: stats?.subjects ?? 0, icon: BookOpen, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { label: 'Total Teachers', value: stats?.teachers ?? 0, icon: UserCog, color: 'text-violet-600', bg: 'bg-violet-50' },
-  ]
+  const isClassTeacher = teacherWorkspace?.classes.some(item => item.role === 'CLASS_TEACHER') || false
+  const statCards = isSchoolAdmin
+    ? [
+        { label: 'Students', value: stats?.students ?? 0, icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+        { label: 'Classes', value: stats?.classes ?? 0, icon: School, color: 'text-teal-600', bg: 'bg-teal-50' },
+        { label: 'Subjects', value: stats?.subjects ?? 0, icon: BookOpen, color: 'text-blue-600', bg: 'bg-blue-50' },
+        { label: 'Teachers', value: stats?.teachers ?? 0, icon: UserCog, color: 'text-violet-600', bg: 'bg-violet-50' },
+      ]
+    : currentUser?.role === 'TEACHER'
+      ? [
+          { label: 'Assigned Classes', value: teacherWorkspace?.classes.length ?? 0, icon: School, color: 'text-teal-600', bg: 'bg-teal-50' },
+          { label: 'My Subjects', value: teacherWorkspace?.subjects.length ?? 0, icon: BookOpen, color: 'text-blue-600', bg: 'bg-blue-50' },
+          { label: 'Authorized Students', value: teacherWorkspace?.students.length ?? 0, icon: Users, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+        ]
+      : []
 
   const quickActions = isSchoolAdmin
     ? [
@@ -150,12 +158,23 @@ export default function Dashboard() {
         { label: 'View Reports', icon: FileText, view: 'reports' as const },
         { label: 'Backup Data', icon: HardDrive, view: 'backup' as const },
       ]
-    : [
-        { label: 'Enter Marks', icon: PenTool, view: 'marks' as const },
-        { label: 'View Reports', icon: FileText, view: 'reports' as const },
-        { label: 'Send SMS', icon: MessageSquare, view: 'sms' as const },
-        { label: 'Manage Students', icon: Users, view: 'students' as const },
-      ]
+    : currentUser?.role === 'TEACHER'
+      ? isClassTeacher
+        ? [
+            { label: 'Enter Class Marks', icon: PenTool, view: 'marks' as const },
+            { label: 'Manage Students', icon: Users, view: 'students' as const },
+            { label: 'Attendance', icon: CalendarCheck, view: 'attendance' as const },
+            { label: 'Tabia', icon: Heart, view: 'tabia' as const },
+            { label: 'Class Reports', icon: FileText, view: 'reports' as const },
+            { label: 'Class SMS', icon: MessageSquare, view: 'sms' as const },
+          ]
+        : [
+            { label: 'My Subject Marks', icon: PenTool, view: 'marks' as const },
+            { label: 'My Subject Reports', icon: FileText, view: 'reports' as const },
+          ]
+      : []
+
+  const canViewPerformance = isSchoolAdmin || isClassTeacher
 
   if (loading) {
     return (
@@ -194,7 +213,7 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      <Card className="border-emerald-100 bg-white shadow-sm">
+      {(isSchoolAdmin || isClassTeacher) && <Card className="border-emerald-100 bg-white shadow-sm">
         <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
@@ -214,7 +233,7 @@ export default function Dashboard() {
             </a>
           </Button>
         </CardContent>
-      </Card>
+      </Card>}
 
       {isSchoolAdmin && currentSchool && (
         <Card className="border-emerald-100 bg-white">
@@ -273,7 +292,7 @@ export default function Dashboard() {
                 </CardDescription>
               </div>
               <Badge className="bg-blue-50 text-blue-700 border-blue-200">
-                {teacherWorkspace.isHeadTeacher ? 'Head Teacher' : 'Teacher'}
+                {isClassTeacher ? 'Class Teacher' : 'Subject Teacher'}
               </Badge>
             </div>
           </CardHeader>
@@ -306,10 +325,10 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setView('students')}><Users className="mr-2 h-4 w-4" />My Students</Button>
+              {isClassTeacher && <Button size="sm" variant="outline" onClick={() => setView('students')}><Users className="mr-2 h-4 w-4" />My Students</Button>}
               <Button size="sm" variant="outline" onClick={() => setView('marks')}><PenTool className="mr-2 h-4 w-4" />Enter Marks</Button>
               <Button size="sm" variant="outline" onClick={() => setView('reports')}><FileText className="mr-2 h-4 w-4" />Student Reports</Button>
-              <Button size="sm" variant="outline" onClick={() => setView('sms')}><MessageSquare className="mr-2 h-4 w-4" />SMS / Excel</Button>
+              {isClassTeacher && <Button size="sm" variant="outline" onClick={() => setView('sms')}><MessageSquare className="mr-2 h-4 w-4" />Class SMS</Button>}
             </div>
           </CardContent>
         </Card>
@@ -337,7 +356,7 @@ export default function Dashboard() {
         })}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {canViewPerformance && <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Grade Distribution Chart */}
         <Card>
           <CardHeader>
@@ -443,10 +462,10 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
-      </div>
+      </div>}
 
       {/* Additional Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {isSchoolAdmin && <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Exams', value: stats?.exams ?? 0 },
           { label: 'Marks Entries', value: stats?.marksEntries ?? 0 },
@@ -459,7 +478,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         ))}
-      </div>
+      </div>}
     </div>
   )
 }

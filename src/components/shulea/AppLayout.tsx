@@ -136,9 +136,17 @@ function SidebarContent({ collapsed, teacherIsClassTeacher }: { collapsed: boole
       )}
 
       {/* Navigation */}
-      <ScrollArea className="flex-1 min-h-0 px-3 py-2 custom-scrollbar">
-        <nav className="space-y-1">
-          {visibleMenuItems.map((item) => {
+      <ScrollArea className="flex-1 min-h-0 px-3 py-3 custom-scrollbar">
+        <nav className="space-y-5">
+          {[
+            { label: 'WORKSPACE', items: visibleMenuItems.filter(item => ['dashboard'].includes(item.view)) },
+            { label: 'ACADEMIC', items: visibleMenuItems.filter(item => ['classes', 'students', 'subjects', 'exams', 'marks', 'attendance', 'tabia', 'reports', 'sms'].includes(item.view)) },
+            { label: 'SCHOOL ADMINISTRATION', items: visibleMenuItems.filter(item => ['teachers', 'devices', 'settings', 'backup', 'super-admin'].includes(item.view)) },
+          ].filter(group => group.items.length > 0).map(group => (
+            <section key={group.label}>
+              {!collapsed && <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.14em] text-slate-400">{group.label}</p>}
+              <div className="space-y-1">
+          {group.items.map((item) => {
             const Icon = item.icon
             const isActive = currentView === item.view
             return (
@@ -150,8 +158,8 @@ function SidebarContent({ collapsed, teacherIsClassTeacher }: { collapsed: boole
                 }}
                 className={`w-full flex items-center gap-3 px-3 py-3 min-h-11 rounded-lg text-sm font-medium transition-all active:scale-95 ${
                   isActive
-                    ? 'bg-emerald-100 text-emerald-700 shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                  ? 'bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 } ${collapsed ? 'justify-center' : ''}`}
                 title={collapsed ? item.label : undefined}
               >
@@ -160,6 +168,9 @@ function SidebarContent({ collapsed, teacherIsClassTeacher }: { collapsed: boole
               </button>
             )
           })}
+              </div>
+            </section>
+          ))}
         </nav>
       </ScrollArea>
 

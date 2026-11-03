@@ -3,13 +3,14 @@
 import { useState } from 'react'
 import { useAppStore, type AppView } from '@/lib/store'
 import {
-  LayoutDashboard, School, Users, FileText, Settings, MoreHorizontal
+  LayoutDashboard, School, Users, FileText, MoreHorizontal, PenTool
 } from 'lucide-react'
 import { MobileMoreMenu } from './MobileMoreMenu'
 
 // Show only 4 main items + More on bottom nav for mobile
 const MOBILE_MENU_ITEMS: { view: AppView; label: string; icon: React.ElementType }[] = [
   { view: 'dashboard', label: 'Home', icon: LayoutDashboard },
+  { view: 'marks', label: 'Marks', icon: PenTool },
   { view: 'classes', label: 'Classes', icon: School },
   { view: 'students', label: 'Students', icon: Users },
   { view: 'reports', label: 'Reports', icon: FileText },
@@ -20,8 +21,8 @@ export function MobileBottomNav({ teacherIsClassTeacher }: { teacherIsClassTeach
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const menuItems = currentUser?.role === 'TEACHER'
     ? teacherIsClassTeacher
-      ? MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'students', 'reports'].includes(item.view))
-      : MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'reports'].includes(item.view))
+      ? MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'marks', 'students', 'reports'].includes(item.view))
+      : MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'marks', 'reports'].includes(item.view))
     : MOBILE_MENU_ITEMS
 
   // Check if current view is in "More" menu
@@ -53,7 +54,7 @@ export function MobileBottomNav({ teacherIsClassTeacher }: { teacherIsClassTeach
           })}
           
           {/* More Button */}
-          <button
+          {!(currentUser?.role === 'TEACHER' && !teacherIsClassTeacher) && <button
             onClick={() => setMoreMenuOpen(true)}
             className={`flex flex-col items-center justify-center flex-1 h-full min-w-0 transition-colors active:scale-95 ${
               isMoreActive
@@ -65,7 +66,7 @@ export function MobileBottomNav({ teacherIsClassTeacher }: { teacherIsClassTeach
             <span className="text-[10px] font-medium truncate max-w-full px-1">
               More
             </span>
-          </button>
+          </button>}
         </div>
       </nav>
 

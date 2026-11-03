@@ -13,7 +13,10 @@ import {
   HardDrive,
   FileText,
   MoreHorizontal,
-  X
+  X,
+  School,
+  Users,
+  Monitor
 } from 'lucide-react'
 import {
   Sheet,
@@ -25,6 +28,10 @@ import { Button } from '@/components/ui/button'
 
 // Additional menu items that appear in "More" sheet
 const MORE_MENU_ITEMS: { view: AppView; label: string; icon: React.ElementType }[] = [
+  { view: 'classes', label: 'Classes', icon: School },
+  { view: 'students', label: 'Students', icon: Users },
+  { view: 'teachers', label: 'Teachers', icon: UserCog },
+  { view: 'devices', label: 'Devices', icon: Monitor },
   { view: 'exams', label: 'Exams', icon: GraduationCap },
   { view: 'attendance', label: 'Attendance', icon: CalendarCheck },
   { view: 'subjects', label: 'Subjects', icon: BookOpen },
@@ -49,7 +56,9 @@ export function MobileMoreMenu({ open, onOpenChange, teacherIsClassTeacher }: Mo
     ? teacherIsClassTeacher
       ? MORE_MENU_ITEMS.filter(item => ['marks', 'attendance', 'tabia', 'sms'].includes(item.view))
       : MORE_MENU_ITEMS.filter(item => item.view === 'marks')
-    : MORE_MENU_ITEMS
+    : currentUser?.role === 'SCHOOL_ADMIN'
+      ? MORE_MENU_ITEMS
+      : MORE_MENU_ITEMS.filter(item => item.view === 'diagnostics')
 
   const handleViewChange = (view: AppView) => {
     setView(view)
