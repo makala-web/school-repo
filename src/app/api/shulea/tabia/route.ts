@@ -1,12 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { rejectDemoMutation } from '@/lib/server-auth';
+import { canAccessClass, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger';
+
+type Actor = NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>;
+
+async function validateTabiaTarget(actor: Actor, classId: string, studentId?: string, examId?: string) {
+  if (actor.role === 'SUPER_ADMIN' || !actor.schoolId || !(await canAccessClass(actor, classId))) return false;
+  const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } });
+  if (!classRecord || classRecord.schoolId !== actor.schoolId) return false;
+  if (studentId) {
+    const student = await db.student.findFirst({ where: { id: studentId, classId, schoolId: actor.schoolId }, select: { id: true } });
+    if (!student) return false;
+  }
+  if (examId) {
+    const exam = await db.exam.findFirst({ where: { id: examId, classId, schoolId: actor.schoolId }, select: { id: true } });
+    if (!exam) return false;
+  }
+  return true;
+}
 
 // Required for static export
 
 // GET: Get tabia records for a class+exam
 export async function GET(request: NextRequest) {
   try {
+    const actor = await getAuthenticatedUser(request);
+    if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     const { searchParams } = new URL(request.url);
     const classId = searchParams.get('classId');
     const examId = searchParams.get('examId');
@@ -15,8 +35,11 @@ export async function GET(request: NextRequest) {
     if (!classId) {
       return NextResponse.json({ error: 'Class ID is required' }, { status: 400 });
     }
+    if (!(await validateTabiaTarget(actor, classId, studentId || undefined, examId || undefined))) {
+      return NextResponse.json({ error: 'You are not authorized to access Tabia for this class' }, { status: 403 });
+    }
 
-    const where: Record<string, unknown> = { classId };
+    const where: Record<string, unknown> = { classId, student: { schoolId: actor.schoolId } };
     if (examId) where.examId = examId;
     if (studentId) where.studentId = studentId;
 
@@ -34,7 +57,7 @@ export async function GET(request: NextRequest) {
     let students: Array<{ id: string; fullName: string; gender: string; admissionNo: string | null }> = [];
     if (examId) {
       students = await db.student.findMany({
-        where: { classId, status: 'ACTIVE' },
+      where: { classId, schoolId: actor.schoolId || '', status: 'ACTIVE' },
         select: { id: true, fullName: true, gender: true, admissionNo: true },
         orderBy: { fullName: 'asc' },
       });
@@ -51,14 +74,26 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const demoBlock = await rejectDemoMutation(request); if (demoBlock) return demoBlock
   try {
+    const actor = await getAuthenticatedUser(request);
+    if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     const body = await request.json();
     const { action } = body;
+    const operationId = request.headers.get('x-shulea-operation-id');
 
     if (action === 'bulk-save') {
-      return await handleBulkSave(body);
+      const records = Array.isArray(body.records) ? body.records : [];
+      for (const record of records) {
+        if (!record?.classId || !(await validateTabiaTarget(actor, String(record.classId), String(record.studentId || ''), record.examId ? String(record.examId) : undefined))) {
+          return NextResponse.json({ error: 'One or more Tabia records are outside your assigned class' }, { status: 403 });
+        }
+      }
+      return await handleBulkSave(body, actor.schoolId!, operationId);
     }
 
-    return await handleSaveTabia(body);
+    if (!body.classId || !body.studentId || !(await validateTabiaTarget(actor, String(body.classId), String(body.studentId), body.examId ? String(body.examId) : undefined))) {
+      return NextResponse.json({ error: 'You are not authorized to update Tabia for this student' }, { status: 403 });
+    }
+    return await handleSaveTabia(body, actor.schoolId!, operationId);
   } catch (error) {
     console.error('Error saving tabia:', error);
     return NextResponse.json({ error: 'Failed to save tabia' }, { status: 500 });
@@ -76,7 +111,7 @@ async function handleSaveTabia(body: {
   honesty?: string;
   leadership?: string;
   sports?: string;
-}) {
+}, schoolId: string, operationId?: string | null) {
   const { studentId, classId, examId, discipline, hygiene, hardWorking, cooperation, honesty, leadership, sports } = body;
 
   if (!studentId || !classId) {
@@ -131,6 +166,8 @@ async function handleSaveTabia(body: {
       },
     });
 
+    await recordSyncLedgerChanges(schoolId, [{ entityType: 'TABIA', entityId: record.id, payload: record }], operationId);
+
     return NextResponse.json({
       message: 'Tabia record saved successfully',
       tabia: record,
@@ -153,6 +190,8 @@ async function handleSaveTabia(body: {
     },
   });
 
+  await recordSyncLedgerChanges(schoolId, [{ entityType: 'TABIA', entityId: record.id, payload: record }], operationId);
+
   return NextResponse.json({
     message: 'Tabia record saved successfully',
     tabia: record,
@@ -172,7 +211,7 @@ async function handleBulkSave(body: {
     leadership?: string;
     sports?: string;
   }>;
-}) {
+}, schoolId: string, operationId?: string | null) {
   const { records } = body;
 
   if (!records || !Array.isArray(records) || records.length === 0) {
@@ -248,6 +287,8 @@ async function handleBulkSave(body: {
       results.push(saved);
     }
   }
+
+  await recordSyncLedgerChanges(schoolId, results.map(record => ({ entityType: 'TABIA', entityId: record.id, payload: record })), operationId);
 
   return NextResponse.json({
     message: `${results.length} tabia records saved successfully`,

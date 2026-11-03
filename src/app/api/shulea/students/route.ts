@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { StudentRepository } from '@/repositories';
 import { db } from '@/lib/db';
 import { canAccessClass, getAuthenticatedUser, getAuthorizedClassIds, rejectDemoMutation } from '@/lib/server-auth';
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger';
 
 // Helper: Validate school access
 async function validateSchoolAccess(userId: string, schoolId: string): Promise<boolean> {
@@ -143,7 +144,9 @@ export async function POST(request: NextRequest) {
       if (!(await canAccessClass(actor, classId))) {
         return NextResponse.json({ error: 'Teacher is not authorized to register students in this class' }, { status: 403 })
       }
-      return await handleFileUpload(formData);
+      const result = await handleFileUpload(formData);
+      await recordCreatedStudents(actor.schoolId!, result, request.headers.get('x-shulea-operation-id'))
+      return result
     }
 
     const body = await request.json();
@@ -157,14 +160,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'csv-upload') {
-      return await handleCsvUpload(body);
+      const result = await handleCsvUpload(body);
+      await recordCreatedStudents(actor.schoolId!, result, request.headers.get('x-shulea-operation-id'))
+      return result
     }
 
-    return await handleCreateStudent(body);
+    const result = await handleCreateStudent(body);
+    await recordCreatedStudents(actor.schoolId!, result, request.headers.get('x-shulea-operation-id'))
+    return result
   } catch (error) {
     console.error('Error creating student:', error);
     return NextResponse.json({ error: 'Failed to create student' }, { status: 500 });
   }
+}
+
+async function recordCreatedStudents(schoolId: string, response: NextResponse, operationId?: string | null) {
+  if (!response.ok) return
+  const payload = await response.clone().json() as { student?: { id?: string }; studentIds?: string[] }
+  const ids = [...new Set([payload.student?.id, ...(payload.studentIds || [])].filter((id): id is string => typeof id === 'string'))]
+  if (!ids.length) return
+  const students = await db.student.findMany({ where: { schoolId, id: { in: ids } } })
+  await recordSyncLedgerChanges(schoolId, students.map(student => ({ entityType: 'STUDENT', entityId: student.id, payload: student })), operationId)
 }
 
 // Handle xlsx/csv file upload via FormData
@@ -741,6 +757,8 @@ export async function PUT(request: NextRequest) {
       classId: classId ?? undefined,
       status: status ?? undefined,
     });
+    const updatedStudent = await db.student.findFirst({ where: { id, schoolId: existing.schoolId } })
+    if (updatedStudent) await recordSyncLedgerChanges(existing.schoolId, [{ entityType: 'STUDENT', entityId: id, payload: updatedStudent }], request.headers.get('x-shulea-operation-id'))
 
     return NextResponse.json({
       message: 'Student updated successfully',
@@ -767,6 +785,9 @@ export async function DELETE(request: NextRequest) {
 
     // Bulk delete all students in a class
     if (classId && !id) {
+      if (actor.role !== 'SCHOOL_ADMIN' && actor.role !== 'SUPER_ADMIN') {
+        return NextResponse.json({ error: 'Only a School Admin can delete an entire class roster' }, { status: 403 })
+      }
       if (!(await canAccessClass(actor, classId))) {
         return NextResponse.json({ error: 'You are not authorized to manage this class' }, { status: 403 })
       }
@@ -786,6 +807,7 @@ export async function DELETE(request: NextRequest) {
       for (const s of classStudents) {
         await StudentRepository.delete(s.id);
       }
+      await recordSyncLedgerChanges(actor.schoolId!, classStudents.map(student => ({ entityType: 'STUDENT', entityId: student.id, payload: null, action: 'DELETE' as const })), request.headers.get('x-shulea-operation-id'))
       
       return NextResponse.json({ 
         message: `${classStudents.length} students deleted from this class`, 
@@ -814,6 +836,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await StudentRepository.delete(id);
+    await recordSyncLedgerChanges(existing.schoolId, [{ entityType: 'STUDENT', entityId: id, payload: null, action: 'DELETE' }], request.headers.get('x-shulea-operation-id'))
 
     return NextResponse.json({ message: 'Student deleted successfully' });
   } catch (error) {

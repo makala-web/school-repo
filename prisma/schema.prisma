@@ -396,7 +396,10 @@ model StudentResult {
   headTeacherComment  String?
   closingDate         String?
   openingDate         String?
+  classTeacherName    String?
+  classTeacherShortName String?
   classTeacherSign    String?
+  headTeacherName     String?
   headTeacherSign     String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

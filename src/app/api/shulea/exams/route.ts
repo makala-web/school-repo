@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { canAccessClass, getAuthenticatedUser, getAuthorizedClassIds, rejectDemoMutation } from '@/lib/server-auth';
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger';
 
 // Required for static export
 
@@ -73,10 +74,10 @@ export async function POST(request: NextRequest) {
     } = body;
     const actor = await getAuthenticatedUser(request)
     if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    if (actor.role === 'SUPER_ADMIN' || !(await canAccessClass(actor, classId))) {
-      return NextResponse.json({ error: 'You are not authorized to manage exams for this class' }, { status: 403 })
+    if (actor.role !== 'SCHOOL_ADMIN') {
+      return NextResponse.json({ error: 'Only the School Admin can create exams' }, { status: 403 })
     }
-    if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== schoolId) {
+    if (!schoolId || !classId || actor.schoolId !== schoolId || !(await canAccessClass(actor, classId))) {
       return NextResponse.json({ error: 'Cross-school access denied' }, { status: 403 })
     }
 
@@ -117,6 +118,7 @@ export async function POST(request: NextRequest) {
         class: { select: { name: true, fullName: true } },
       },
     });
+    await recordSyncLedgerChanges(schoolId, [{ entityType: 'EXAM', entityId: exam.id, payload: exam }], request.headers.get('x-shulea-operation-id'));
 
     return NextResponse.json({
       message: 'Exam created successfully',
@@ -145,8 +147,8 @@ export async function PUT(request: NextRequest) {
     }
     const actor = await getAuthenticatedUser(request)
     if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    if (actor.role === 'SUPER_ADMIN' || !(await canAccessClass(actor, existing.classId))) {
-      return NextResponse.json({ error: 'You are not authorized to manage this class exam' }, { status: 403 })
+    if (actor.role !== 'SCHOOL_ADMIN' || actor.schoolId !== existing.schoolId || !(await canAccessClass(actor, existing.classId))) {
+      return NextResponse.json({ error: 'Only the School Admin can update exams' }, { status: 403 })
     }
 
     const exam = await db.exam.update({
@@ -162,6 +164,7 @@ export async function PUT(request: NextRequest) {
         class: { select: { name: true, fullName: true } },
       },
     });
+    await recordSyncLedgerChanges(actor.schoolId!, [{ entityType: 'EXAM', entityId: exam.id, payload: exam }], request.headers.get('x-shulea-operation-id'));
 
     return NextResponse.json({
       message: 'Exam updated successfully',
@@ -190,11 +193,12 @@ export async function DELETE(request: NextRequest) {
     }
     const actor = await getAuthenticatedUser(request)
     if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    if (actor.role === 'SUPER_ADMIN' || !(await canAccessClass(actor, existing.classId))) {
-      return NextResponse.json({ error: 'You are not authorized to manage this class exam' }, { status: 403 })
+    if (actor.role !== 'SCHOOL_ADMIN' || actor.schoolId !== existing.schoolId || !(await canAccessClass(actor, existing.classId))) {
+      return NextResponse.json({ error: 'Only the School Admin can delete exams' }, { status: 403 })
     }
 
     await db.exam.delete({ where: { id } });
+    await recordSyncLedgerChanges(actor.schoolId!, [{ entityType: 'EXAM', entityId: id, payload: null, action: 'DELETE' }], request.headers.get('x-shulea-operation-id'));
 
     return NextResponse.json({ message: 'Exam deleted successfully' });
   } catch (error) {

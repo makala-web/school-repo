@@ -40,10 +40,16 @@ const MORE_MENU_ITEMS: { view: AppView; label: string; icon: React.ElementType }
 interface MobileMoreMenuProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  teacherIsClassTeacher: boolean | null
 }
 
-export function MobileMoreMenu({ open, onOpenChange }: MobileMoreMenuProps) {
-  const { currentView, setView } = useAppStore()
+export function MobileMoreMenu({ open, onOpenChange, teacherIsClassTeacher }: MobileMoreMenuProps) {
+  const { currentView, setView, currentUser } = useAppStore()
+  const menuItems = currentUser?.role === 'TEACHER'
+    ? teacherIsClassTeacher
+      ? MORE_MENU_ITEMS.filter(item => ['marks', 'attendance', 'tabia', 'sms'].includes(item.view))
+      : MORE_MENU_ITEMS.filter(item => item.view === 'marks')
+    : MORE_MENU_ITEMS
 
   const handleViewChange = (view: AppView) => {
     setView(view)
@@ -61,7 +67,7 @@ export function MobileMoreMenu({ open, onOpenChange }: MobileMoreMenuProps) {
         </SheetHeader>
         <div className="max-h-[58vh] overflow-y-auto custom-scrollbar pr-1">
         <div className="grid grid-cols-3 gap-3 py-6">
-          {MORE_MENU_ITEMS.map((item) => {
+          {menuItems.map((item) => {
             const Icon = item.icon
             const isActive = currentView === item.view
             return (

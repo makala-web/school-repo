@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
 import type { Prisma } from '@prisma/client';
+import { recordSyncLedgerChanges, schoolSyncPayload } from '@/lib/sync-ledger';
 
 // GET: Get current school info
 export async function GET(request: NextRequest) {
@@ -147,6 +148,7 @@ export async function POST(request: NextRequest) {
           where: { id },
           data: updateData,
         });
+        await recordSyncLedgerChanges(id, [{ entityType: 'SCHOOL', entityId: id, payload: schoolSyncPayload(school) }], request.headers.get('x-shulea-operation-id'))
         return NextResponse.json({
           message: 'Logo updated successfully',
           school,
@@ -236,6 +238,7 @@ export async function POST(request: NextRequest) {
         where: { id },
         data: schoolData,
       });
+      await recordSyncLedgerChanges(id, [{ entityType: 'SCHOOL', entityId: id, payload: schoolSyncPayload(school) }], request.headers.get('x-shulea-operation-id'))
     } else {
       // Create new school
       school = await db.school.create({

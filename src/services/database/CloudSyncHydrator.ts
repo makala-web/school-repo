@@ -17,7 +17,7 @@ const TABLE_FIELDS: Record<string, string[]> = {
   Exam: ['id', 'name', 'examType', 'classId', 'schoolId', 'academicYear', 'term', 'examDate', 'createdAt', 'updatedAt'],
   Attendance: ['id', 'studentId', 'classId', 'date', 'status', 'createdAt', 'updatedAt'],
   MarksEntry: ['id', 'studentId', 'classSubjectId', 'examId', 'marks', 'grade', 'remarks', 'recordedByUserId', 'createdAt', 'updatedAt'],
-  StudentResult: ['id', 'studentId', 'examId', 'classId', 'totalMarks', 'averageMarks', 'grade', 'division', 'points', 'rank', 'status', 'subjectCount', 'classTeacherComment', 'headTeacherComment', 'closingDate', 'openingDate', 'classTeacherSign', 'headTeacherSign', 'createdAt', 'updatedAt'],
+  StudentResult: ['id', 'studentId', 'examId', 'classId', 'totalMarks', 'averageMarks', 'grade', 'division', 'points', 'rank', 'status', 'subjectCount', 'classTeacherComment', 'headTeacherComment', 'closingDate', 'openingDate', 'classTeacherName', 'classTeacherShortName', 'classTeacherSign', 'headTeacherName', 'headTeacherSign', 'createdAt', 'updatedAt'],
   Tabia: ['id', 'studentId', 'classId', 'examId', 'discipline', 'hygiene', 'hardWorking', 'cooperation', 'honesty', 'leadership', 'sports', 'createdAt', 'updatedAt'],
   GradingConfig: ['id', 'schoolType', 'grade', 'minMark', 'maxMark', 'remarks', 'points', 'division', 'schoolId', 'createdAt', 'updatedAt'],
 }
@@ -138,7 +138,7 @@ export async function hydrateAuthorizedDevice(scope: { userId: string | null; sc
 }
 
 const ENTITY_TABLE: Record<string, string> = {
-  STUDENT: 'Student', TEACHER: 'Teacher', CLASS: 'Class', SUBJECT: 'Subject',
+  SCHOOL: 'School', STUDENT: 'Student', TEACHER: 'Teacher', CLASS: 'Class', SUBJECT: 'Subject',
   CLASS_SUBJECT: 'ClassSubject', TEACHER_SUBJECT: 'TeacherSubject', GRADING_CONFIG: 'GradingConfig',
   CLASS_TEACHER_ASSIGNMENT: 'ClassTeacherAssignment',
   ATTENDANCE: 'Attendance', EXAM: 'Exam', MARK: 'MarksEntry', RESULT: 'StudentResult', TABIA: 'Tabia',

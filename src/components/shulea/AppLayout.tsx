@@ -80,7 +80,7 @@ function DiagnosticsPlaceholder() {
   )
 }
 
-function SidebarContent({ collapsed }: { collapsed: boolean }) {
+function SidebarContent({ collapsed, teacherIsClassTeacher }: { collapsed: boolean; teacherIsClassTeacher: boolean | null }) {
   const { currentView, setView, currentSchool, currentUser, schoolType, setSidebarOpen } = useAppStore()
 
   // Filter menu items based on user role
@@ -90,6 +90,11 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
     }
     if (!item.requiredRole) return true
     if (!currentUser?.role) return false
+    if (currentUser.role === 'TEACHER') {
+      const common = ['dashboard', 'marks', 'reports']
+      const classTeacher = ['students', 'attendance', 'tabia', 'sms']
+      return common.includes(item.view) || (teacherIsClassTeacher === true && classTeacher.includes(item.view))
+    }
     // Check if user has the required role or higher
     const roleHierarchy: Record<string, number> = {
       'TEACHER': 1,
@@ -240,11 +245,39 @@ export default function AppLayout() {
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [renewalSaving, setRenewalSaving] = useState(false)
   const [isOnline, setIsOnline] = useState(true)
+  const [teacherIsClassTeacher, setTeacherIsClassTeacher] = useState<boolean | null>(null)
   const [syncStatus, setSyncStatus] = useState<OfflineSyncStatus>({ pending: 0, failed: 0, deadLetter: 0, conflicts: 0, nextRetryAt: null, lastError: null })
   const licenseStatus = getSchoolLicenseStatus({
     status: currentSchool?.licenseStatus || currentUser?.school?.licenseStatus || 'ACTIVE',
     expiryDate: currentSchool?.expiryDate || currentUser?.school?.expiryDate || undefined,
   })
+
+  useEffect(() => {
+    let cancelled = false
+    if (currentUser?.role !== 'TEACHER' || !currentUser.schoolId) {
+      setTeacherIsClassTeacher(null)
+      return
+    }
+    setTeacherIsClassTeacher(null)
+    void (async () => {
+      try {
+        const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${encodeURIComponent(currentUser.schoolId!)}`)
+        const teacherId = teacherData.teachers?.find((teacher: { userId?: string }) => teacher.userId === currentUser.id)?.id
+        if (!teacherId) {
+          if (!cancelled) setTeacherIsClassTeacher(false)
+          return
+        }
+        const assignmentData = await apiCall(`/api/shulea/teacher-classes?teacherId=${encodeURIComponent(teacherId)}&schoolId=${encodeURIComponent(currentUser.schoolId!)}&actorUserId=${encodeURIComponent(currentUser.id)}`)
+        if (!cancelled) setTeacherIsClassTeacher((assignmentData.classTeacherAssignments || []).length > 0)
+      } catch (error) {
+        // Cached assignments remain available through the offline adapter; if
+        // the record is not available, fail closed to ordinary-teacher menus.
+        console.warn('[AppLayout] Could not load teacher class permissions:', error)
+        if (!cancelled) setTeacherIsClassTeacher(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [currentUser?.id, currentUser?.schoolId, currentUser?.role])
 
   // Persisted sessions can be restored before the persisted school object has
   // hydrated. Keep all school menus behind one context gate so they never
@@ -386,7 +419,14 @@ export default function AppLayout() {
 
   // Keep the platform account in its control plane without writing navigation
   // state during render/effect cycles.
-  const effectiveView: AppView = currentUser?.role === 'SUPER_ADMIN' ? 'super-admin' : currentView
+  const teacherAllowedViews = teacherIsClassTeacher
+    ? ['dashboard', 'marks', 'reports', 'students', 'attendance', 'tabia', 'sms']
+    : ['dashboard', 'marks', 'reports']
+  const effectiveView: AppView = currentUser?.role === 'SUPER_ADMIN'
+    ? 'super-admin'
+    : currentUser?.role === 'TEACHER' && teacherIsClassTeacher !== null && !teacherAllowedViews.includes(currentView)
+      ? 'dashboard'
+      : currentView
 
   if (schoolContextLoading) {
     return (
@@ -430,7 +470,7 @@ export default function AppLayout() {
             sidebarOpen ? 'w-64' : 'w-[68px]'
           }`}
         >
-          <SidebarContent collapsed={!sidebarOpen} />
+          <SidebarContent collapsed={!sidebarOpen} teacherIsClassTeacher={teacherIsClassTeacher} />
           <button
             onClick={toggleSidebar}
             className="absolute -right-3 top-7 w-6 h-6 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center hover:bg-gray-50 transition-colors"
@@ -445,7 +485,7 @@ export default function AppLayout() {
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-72 p-0">
             <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
-            <SidebarContent collapsed={false} />
+            <SidebarContent collapsed={false} teacherIsClassTeacher={teacherIsClassTeacher} />
           </SheetContent>
         </Sheet>
       )}
@@ -557,7 +597,7 @@ export default function AppLayout() {
         )}
 
         {/* Mobile Bottom Navigation */}
-        {isMobile && currentUser?.role !== 'SUPER_ADMIN' && <MobileBottomNav />}
+        {isMobile && currentUser?.role !== 'SUPER_ADMIN' && <MobileBottomNav teacherIsClassTeacher={teacherIsClassTeacher} />}
       </main>
     </div>
   )

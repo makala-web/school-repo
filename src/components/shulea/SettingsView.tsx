@@ -29,6 +29,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
 import TeacherManagement from '@/components/shulea/TeacherManagement'
+import ClassTeacherManagement from '@/components/shulea/ClassTeacherManagement'
 import DeviceManagement from '@/components/shulea/DeviceManagement'
 
 interface SchoolData {
@@ -1271,7 +1272,10 @@ export default function SettingsView() {
         {/* Teachers Management Tab - School Admin only */}
         {(currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN') && (
           <TabsContent value="teachers" className="mt-4">
-            <TeacherManagement />
+            <div className="space-y-6">
+              <TeacherManagement />
+              <ClassTeacherManagement />
+            </div>
           </TabsContent>
         )}
 

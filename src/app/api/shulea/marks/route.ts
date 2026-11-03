@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { authorizeMarkMutation, canAccessClass, canAccessTeacherSubject, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+import { authorizeMarkMutation, canAccessClass, canManageClassMarks, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth';
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger';
 
 async function recordMarkSyncChanges(records: Array<{ id: string; schoolId: string; [key: string]: unknown }>, operationId?: string | null) {
   for (const record of records) {
@@ -120,10 +121,12 @@ export async function GET(request: NextRequest) {
     let subjectOnlyIds: string[] | null = null
     if (actor.role === 'TEACHER') {
       const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
+      const classTeacherAssignment = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId, schoolId: actor.schoolId || '', status: 'ACTIVE' }, select: { id: true } }) : null
       const assignments = teacher ? await db.teacherSubject.findMany({ where: { teacherId: teacher.id, classId, subject: { schoolId: actor.schoolId || '' } }, select: { subjectId: true } }) : []
       subjectOnlyIds = assignments.map(item => item.subjectId)
-      if (subjectId && !subjectOnlyIds.includes(subjectId)) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
-      if (subjectOnlyIds.length === 0) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
+      if (classTeacherAssignment) subjectOnlyIds = null
+      if (subjectId && subjectOnlyIds && !subjectOnlyIds.includes(subjectId)) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
+      if (subjectOnlyIds && subjectOnlyIds.length === 0) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
     }
 
     // Get the class to determine school type
@@ -148,7 +151,7 @@ export async function GET(request: NextRequest) {
       if (!classSubject) {
         return NextResponse.json({ error: 'The selected subject is not assigned to this class' }, { status: 400 });
       }
-      if (actor.role === 'TEACHER' && (!subjectOnlyIds || !subjectOnlyIds.includes(subjectId))) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
+      if (actor.role === 'TEACHER' && subjectOnlyIds && !subjectOnlyIds.includes(subjectId)) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
       where.classSubjectId = classSubject.id;
     } else {
       // Filter by class via classSubject
@@ -224,9 +227,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Exam does not belong to the selected class' }, { status: 400 })
       }
     }
+    if (actor.role === 'TEACHER' && !(await canAccessClass(actor, targetClassId))) {
+      return NextResponse.json({ error: 'Ordinary subject teachers save marks privately and submit the Excel file to the assigned Class Teacher' }, { status: 403 })
+    }
     if (actor.role === 'TEACHER' && body.classSubjectId) {
       const classSubject = await db.classSubject.findUnique({ where: { id: body.classSubjectId }, select: { subjectId: true, classId: true } })
-      if (!classSubject || classSubject.classId !== targetClassId || !(await canAccessTeacherSubject(actor, targetClassId, classSubject.subjectId))) return NextResponse.json({ error: 'Teacher is not authorized for this subject' }, { status: 403 })
+      if (!classSubject || classSubject.classId !== targetClassId || !(await canManageClassMarks(actor, targetClassId, classSubject.subjectId))) return NextResponse.json({ error: 'Teacher is not authorized for this subject or class' }, { status: 403 })
     }
 
     if (action === 'bulk-save') {
@@ -239,7 +245,7 @@ export async function POST(request: NextRequest) {
         const classTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: body.classId, schoolId: actor.schoolId || '', status: 'ACTIVE' }, select: { id: true } }) : null
         if (!classTeacher) return NextResponse.json({ error: 'Only the class teacher or school administrator can compute class results' }, { status: 403 })
       }
-      return await handleComputeResults(body);
+      return await handleComputeResults(body, actor.schoolId!, request.headers.get('x-shulea-operation-id'));
     }
 
     return await handleSaveMark(body, actor, request.headers.get('x-shulea-operation-id'));
@@ -413,7 +419,7 @@ async function handleBulkSave(body: {
 async function handleComputeResults(body: {
   classId: string;
   examId: string;
-}) {
+}, schoolId: string, operationId?: string | null) {
   const { classId, examId } = body;
 
   if (!classId || !examId) {
@@ -434,6 +440,15 @@ async function handleComputeResults(body: {
   if (!classRecord) {
     return NextResponse.json({ error: 'Class not found' }, { status: 404 });
   }
+  const examRecord = await db.exam.findFirst({ where: { id: examId, classId, schoolId } })
+  if (!examRecord) return NextResponse.json({ error: 'Exam does not belong to this school and class' }, { status: 400 })
+  const [schoolSignature, classTeacherAssignment] = await Promise.all([
+    db.school.findUnique({ where: { id: schoolId }, select: { headTeacherName: true, headTeacherSign: true } }),
+    db.classTeacherAssignment.findFirst({
+      where: { schoolId, classId, academicYear: examRecord.academicYear, status: 'ACTIVE' },
+      include: { teacher: { select: { name: true, shortName: true, sign: true } } },
+    }),
+  ])
 
   const schoolType = classRecord.schoolType;
   const classSubjectIds = classRecord.subjects.map(cs => cs.id);
@@ -601,6 +616,11 @@ async function handleComputeResults(body: {
           rank: (result as Record<string, unknown>)['rank'] as number | null,
           status: result.status,
           subjectCount: result.subjectCount,
+          classTeacherName: classTeacherAssignment?.teacher.name || null,
+          classTeacherShortName: classTeacherAssignment?.teacher.shortName || null,
+          classTeacherSign: classTeacherAssignment?.teacher.sign || classTeacherAssignment?.teacher.shortName || null,
+          headTeacherName: schoolSignature?.headTeacherName || null,
+          headTeacherSign: schoolSignature?.headTeacherSign || null,
         },
         update: {
           totalMarks: result.totalMarks,
@@ -615,6 +635,9 @@ async function handleComputeResults(body: {
       })
     )
   );
+
+  const persistedResults = await db.studentResult.findMany({ where: { examId, classId, studentId: { in: students.map(student => student.id) } } })
+  await recordSyncLedgerChanges(schoolId, persistedResults.map(result => ({ entityType: 'RESULT', entityId: result.id, payload: result })), operationId)
 
   // Return enriched results
   const enrichedResults = allResults.map(r => {

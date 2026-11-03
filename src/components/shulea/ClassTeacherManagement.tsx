@@ -77,15 +77,13 @@ export default function ClassTeacherManagement() {
       )
       setAssignments(assignmentsData.assignments || [])
 
-      // Load classes and teachers from school
-      const schoolData = await apiCall(
-        `/api/shulea/school?schoolId=${currentUser?.schoolId}&includeClasses=true&includeTeachers=true`
-      )
-
-      if (schoolData.school) {
-        setClasses(schoolData.school.classes || [])
-        setTeachers(schoolData.school.teachers || [])
-      }
+      // The school summary endpoint does not include nested class/teacher lists.
+      const [classData, teacherData] = await Promise.all([
+        apiCall(`/api/shulea/classes?schoolId=${currentUser?.schoolId}`),
+        apiCall(`/api/shulea/teachers?schoolId=${currentUser?.schoolId}`),
+      ])
+      setClasses(classData.classes || [])
+      setTeachers((teacherData.teachers || []).filter((teacher: { user?: { role?: string } }) => !teacher.user?.role || teacher.user.role === 'TEACHER'))
     } catch (error) {
       toast.error('Failed to load class teacher data')
       console.error(error)

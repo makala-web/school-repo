@@ -604,16 +604,9 @@ export default function TeacherManagement() {
               <p className="text-xs text-muted-foreground">This short name is used as the teacher signature on reports.</p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="invite-role">Role</Label>
-              <select
-                id="invite-role"
-                value={inviteForm.role}
-                onChange={(e) => setInviteForm({ ...inviteForm, role: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md"
-              >
-                <option value="TEACHER">Teacher</option>
-              </select>
+            <div className="space-y-2 rounded-md border bg-slate-50 p-3">
+              <Label>Account role: Teacher</Label>
+              <p className="text-xs text-muted-foreground">A Class Teacher is still a Teacher account. The School Admin assigns that responsibility to a specific class and academic year from Settings → Class Teacher Assignments.</p>
             </div>
 
             <div className="space-y-2">

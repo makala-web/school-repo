@@ -58,6 +58,7 @@ function getClassPlaceholder(schoolType: SchoolType): string {
 
 export default function ClassManagement() {
   const { currentSchool, schoolType, currentUser } = useAppStore()
+  const isSchoolAdmin = currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN'
   const [classes, setClasses] = useState<ClassItem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -256,7 +257,7 @@ export default function ClassManagement() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {isSchoolAdmin && <div className="flex items-center gap-2">
           <Button
             onClick={handleGenerateDefaults}
             disabled={generating || missingDefaults.length === 0}
@@ -270,7 +271,7 @@ export default function ClassManagement() {
             <Plus className="w-4 h-4" />
             Add Class
           </Button>
-        </div>
+        </div>}
       </div>
 
       {/* Default Classes Info Banner */}
@@ -388,7 +389,7 @@ export default function ClassManagement() {
                         <Badge variant="secondary" className="bg-orange-100 text-orange-700 border-orange-300 font-medium">{cls._count?.subjects ?? cls.subjectCount ?? 0}</Badge>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap" data-label="Actions">
-                        <div className="flex items-center justify-end gap-1">
+                        {isSchoolAdmin && <div className="flex items-center justify-end gap-1">
                           <Button 
                             variant="ghost" 
                             size="sm"
@@ -407,7 +408,7 @@ export default function ClassManagement() {
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
-                        </div>
+                        </div>}
                       </TableCell>
                     </TableRow>
                   ))

@@ -30,8 +30,10 @@ export interface OfflineSyncStatus {
 
 const DB_NAME = 'shulea-offline-sync'
 const STORE_NAME = 'mutations'
+const PRIVATE_MARKS_STORE = 'private-teacher-marks'
 const MAX_RETRY_ATTEMPTS = 8
 const SYNC_PRIORITY: Record<string, number> = {
+  '/api/shulea/school': 5,
   '/api/shulea/classes': 10,
   '/api/shulea/subjects': 20,
   '/api/shulea/teachers': 30,
@@ -116,7 +118,7 @@ async function dependencyReadyForItem(item: OfflineMutation): Promise<boolean> {
 
 function openQueueDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2)
+    const request = indexedDB.open(DB_NAME, 3)
     request.onupgradeneeded = () => {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -125,10 +127,71 @@ function openQueueDb(): Promise<IDBDatabase> {
       const store = request.transaction?.objectStore(STORE_NAME)
       if (store && !store.indexNames.contains('operationId')) store.createIndex('operationId', 'operationId')
       if (store && !store.indexNames.contains('scope')) store.createIndex('scope', ['userId', 'schoolId'])
+      if (!db.objectStoreNames.contains(PRIVATE_MARKS_STORE)) {
+        const drafts = db.createObjectStore(PRIVATE_MARKS_STORE, { keyPath: 'id' })
+        drafts.createIndex('markScope', ['userId', 'schoolId', 'classId', 'examId', 'subjectId'], { unique: false })
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error || new Error('Failed to open offline sync queue'))
   })
+}
+
+export interface PrivateTeacherMarkDraft {
+  userId: string
+  schoolId: string
+  classId: string
+  examId: string
+  subjectId: string
+  studentId: string
+  marks: number
+  grade: string
+  remarks?: string
+  updatedAt: string
+}
+
+function privateDraftId(draft: Pick<PrivateTeacherMarkDraft, 'userId' | 'schoolId' | 'classId' | 'examId' | 'subjectId' | 'studentId'>) {
+  return [draft.userId, draft.schoolId, draft.classId, draft.examId, draft.subjectId, draft.studentId].join(':')
+}
+
+export async function savePrivateTeacherMarkDrafts(drafts: PrivateTeacherMarkDraft[]) {
+  if (!drafts.length) return
+  const db = await openQueueDb()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(PRIVATE_MARKS_STORE, 'readwrite')
+    const store = transaction.objectStore(PRIVATE_MARKS_STORE)
+    for (const draft of drafts) store.put({ ...draft, id: privateDraftId(draft) })
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('Could not save private marks'))
+    transaction.onabort = () => reject(transaction.error || new Error('Private marks save was interrupted'))
+  }).finally(() => db.close())
+}
+
+export async function getPrivateTeacherMarkDrafts(scope: Pick<PrivateTeacherMarkDraft, 'userId' | 'schoolId' | 'classId' | 'examId' | 'subjectId'>) {
+  const db = await openQueueDb()
+  try {
+    return await new Promise<PrivateTeacherMarkDraft[]>((resolve, reject) => {
+      const request = db.transaction(PRIVATE_MARKS_STORE, 'readonly').objectStore(PRIVATE_MARKS_STORE)
+        .index('markScope').getAll([scope.userId, scope.schoolId, scope.classId, scope.examId, scope.subjectId])
+      request.onsuccess = () => resolve(request.result as PrivateTeacherMarkDraft[])
+      request.onerror = () => reject(request.error || new Error('Could not load private marks'))
+    })
+  } finally {
+    db.close()
+  }
+}
+
+export async function deletePrivateTeacherMarkDrafts(scope: Pick<PrivateTeacherMarkDraft, 'userId' | 'schoolId' | 'classId' | 'examId' | 'subjectId'>, studentIds: string[]) {
+  if (!studentIds.length) return
+  const db = await openQueueDb()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(PRIVATE_MARKS_STORE, 'readwrite')
+    const store = transaction.objectStore(PRIVATE_MARKS_STORE)
+    for (const studentId of studentIds) store.delete(privateDraftId({ ...scope, studentId }))
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error || new Error('Could not clear private marks'))
+    transaction.onabort = () => reject(transaction.error || new Error('Private marks clear was interrupted'))
+  }).finally(() => db.close())
 }
 
 async function readQueue(): Promise<OfflineMutation[]> {

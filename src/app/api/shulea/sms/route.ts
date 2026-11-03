@@ -2,28 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 import { SmsResultsService } from '@/services/sms/SmsResultsService'
 import { ConnectionManager } from '@/services/database/ConnectionManager'
 import { TABLES, INDEXES } from '@/services/database/schema'
-import { rejectDemoMutation } from '@/lib/server-auth'
+import { canAccessClass, rejectDemoMutation } from '@/lib/server-auth'
 import { db } from '@/lib/db'
 import { getAuthenticatedUser } from '@/lib/server-auth'
 
 async function getActorAccess(request: NextRequest) {
   const actor = await getAuthenticatedUser(request)
   if (!actor) return { actor: null, error: NextResponse.json({ error: 'Authentication required' }, { status: 401 }) }
-  if (!['SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER'].includes(actor.role)) {
+  if (!['SCHOOL_ADMIN', 'TEACHER'].includes(actor.role)) {
     return { actor: null, error: NextResponse.json({ error: 'SMS access denied' }, { status: 403 }) }
   }
   return { actor, error: null }
 }
 
-async function teacherCanAccessClass(actor: { id: string; role: string; schoolId?: string | null }, classId: string) {
-  if (actor.role !== 'TEACHER') return true
-  const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true, schoolId: true } })
-  if (!teacher) return false
-  const [classAssignment, subjectAssignment] = await Promise.all([
-    db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId, status: 'ACTIVE' }, select: { id: true } }),
-    db.teacherSubject.findFirst({ where: { teacherId: teacher.id, classId }, select: { id: true } }),
-  ])
-  return Boolean(classAssignment || subjectAssignment)
+async function teacherCanAccessClass(actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>, classId: string) {
+  if (actor.role === 'SUPER_ADMIN' || !actor.schoolId) return false
+  const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
+  if (!classRecord || classRecord.schoolId !== actor.schoolId) return false
+  // SMS result access is class-wide, so subject-only assignment is insufficient.
+  return canAccessClass(actor, classId)
 }
 
 async function ensureSmsHistoryTable() {
@@ -65,23 +62,28 @@ export async function GET(request: NextRequest) {
       }
       if (classId && classId !== 'ALL') {
         const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
-        if (!classRecord || (actor.role !== 'SUPER_ADMIN' && classRecord.schoolId !== actor.schoolId) || !(await teacherCanAccessClass(actor, classId))) {
+        if (!classRecord || classRecord.schoolId !== actor.schoolId || !(await teacherCanAccessClass(actor, classId))) {
           return NextResponse.json({ error: 'Class SMS access denied' }, { status: 403 })
         }
         where.push('classId = ?')
         params.push(classId)
       }
-      if (actor.role !== 'SUPER_ADMIN') {
+      {
         if (!actor.schoolId) return NextResponse.json({ history: [] })
-        if (actor.role === 'TEACHER') {
-          const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-          const assignments = teacher ? await db.classTeacherAssignment.findMany({ where: { teacherId: teacher.id, schoolId: actor.schoolId, status: 'ACTIVE' }, select: { classId: true } }) : []
-          const subjects = teacher ? await db.teacherSubject.findMany({ where: { teacherId: teacher.id }, select: { classId: true } }) : []
-          const classIds = [...new Set([...assignments.map(item => item.classId), ...subjects.map(item => item.classId)])]
-          if (!classIds.length) return NextResponse.json({ history: [] })
-          where.push(`classId IN (${classIds.map(() => '?').join(',')})`)
-          params.push(...classIds)
-        }
+        const teacher = actor.role === 'TEACHER'
+          ? await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
+          : null
+        const classes = await db.class.findMany({
+          where: {
+            schoolId: actor.schoolId,
+            ...(teacher ? { classTeacherAssignments: { some: { teacherId: teacher.id, status: 'ACTIVE' } } } : {}),
+          },
+          select: { id: true },
+        })
+        const allowedClassIds = classes.map(item => item.id)
+        if (!allowedClassIds.length) return NextResponse.json({ history: [] })
+        where.push(`classId IN (${allowedClassIds.map(() => '?').join(',')})`)
+        params.push(...allowedClassIds)
       }
       if (student) {
         where.push('(studentName LIKE ? OR studentId = ?)')
@@ -103,7 +105,7 @@ export async function GET(request: NextRequest) {
     }
 
     const exam = await db.exam.findUnique({ where: { id: examId }, select: { classId: true, schoolId: true } })
-    if (!exam || (actor.role !== 'SUPER_ADMIN' && exam.schoolId !== actor.schoolId) || !(await teacherCanAccessClass(actor, exam.classId))) {
+    if (!exam || exam.schoolId !== actor.schoolId || !(await teacherCanAccessClass(actor, exam.classId))) {
       return NextResponse.json({ error: 'Exam SMS access denied' }, { status: 403 })
     }
 
@@ -143,8 +145,12 @@ export async function POST(request: NextRequest) {
       const classId = item.classId ? String(item.classId) : ''
       if (!classId) return NextResponse.json({ error: 'classId is required for SMS history' }, { status: 400 })
       const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
-      if (!classRecord || (actor.role !== 'SUPER_ADMIN' && classRecord.schoolId !== actor.schoolId) || !(await teacherCanAccessClass(actor, classId))) {
+      if (!classRecord || classRecord.schoolId !== actor.schoolId || !(await teacherCanAccessClass(actor, classId))) {
         return NextResponse.json({ error: 'Class SMS access denied' }, { status: 403 })
+      }
+      if (item.studentId) {
+        const student = await db.student.findFirst({ where: { id: String(item.studentId), classId, schoolId: actor.schoolId }, select: { id: true } })
+        if (!student) return NextResponse.json({ error: 'SMS student does not belong to the authorized class' }, { status: 403 })
       }
       await conn.execute(
         `INSERT INTO SmsHistory (id, recipient, studentId, studentName, classId, message, status, sentAt, updatedAt)

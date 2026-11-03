@@ -146,10 +146,7 @@ function newLocalId() {
 async function assertLocalStudentWriteAccess(classId: string, studentId?: string) {
   const user = useAppStore.getState().currentUser
   if (!user?.id || !user.schoolId || !classId) throw new Error('A signed-in school account and class are required')
-  const classRows = await ConnectionManager.query<{ schoolId: string }>(
-    'SELECT schoolId FROM Class WHERE id = ? LIMIT 1', [classId],
-  )
-  if (!classRows[0] || classRows[0].schoolId !== user.schoolId) throw new Error('Class does not belong to your school')
+  await assertLocalStudentClassScope(classId, studentId)
   if (user.role === 'SCHOOL_ADMIN') return
   if (user.role !== 'TEACHER') throw new Error('Only a Class Teacher or School Admin can manage students')
   const teacherRows = await ConnectionManager.query<{ id: string }>(
@@ -161,6 +158,15 @@ async function assertLocalStudentWriteAccess(classId: string, studentId?: string
     [teacherRows[0].id, user.schoolId, classId],
   )
   if (!allowed.length) throw new Error('Only the assigned Class Teacher can manage students in this class')
+}
+
+async function assertLocalStudentClassScope(classId: string, studentId?: string) {
+  const user = useAppStore.getState().currentUser
+  if (!user?.id || !user.schoolId || !classId) throw new Error('A signed-in school account and class are required')
+  const classRows = await ConnectionManager.query<{ schoolId: string }>(
+    'SELECT schoolId FROM Class WHERE id = ? LIMIT 1', [classId],
+  )
+  if (!classRows[0] || classRows[0].schoolId !== user.schoolId) throw new Error('Class does not belong to your school')
   if (studentId) {
     const studentRows = await ConnectionManager.query<{ classId: string; schoolId: string }>(
       'SELECT classId, schoolId FROM Student WHERE id = ? AND schoolId = ? LIMIT 1', [studentId, user.schoolId],
@@ -171,11 +177,25 @@ async function assertLocalStudentWriteAccess(classId: string, studentId?: string
   }
 }
 
+async function assertLocalMarksAccess(classId: string, subjectId: string) {
+  const user = useAppStore.getState().currentUser
+  if (!user?.id || !user.schoolId || !classId || !subjectId) throw new Error('Class and subject are required')
+  if (user.role === 'SCHOOL_ADMIN') return
+  if (user.role !== 'TEACHER') throw new Error('Academic access denied')
+  const teacherRows = await ConnectionManager.query<{ id: string }>('SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1', [user.id, user.schoolId])
+  const teacherId = teacherRows[0]?.id
+  if (!teacherId) throw new Error('Teacher profile is unavailable offline')
+  const classTeacher = await ConnectionManager.query<{ id: string }>("SELECT id FROM ClassTeacherAssignment WHERE teacherId = ? AND schoolId = ? AND classId = ? AND status = 'ACTIVE' LIMIT 1", [teacherId, user.schoolId, classId])
+  if (classTeacher.length) return
+  const subjectAssignment = await ConnectionManager.query<{ id: string }>('SELECT id FROM TeacherSubject WHERE teacherId = ? AND classId = ? AND subjectId = ? LIMIT 1', [teacherId, classId, subjectId])
+  if (!subjectAssignment.length) throw new Error('You can only enter marks for your assigned subject or assigned class')
+}
+
 async function listLocalClassTeacherAssignments(params: Record<string, unknown>) {
   const currentUser = useAppStore.getState().currentUser
   const schoolId = String(params.schoolId || currentUser?.schoolId || '')
   const includeHistory = String(params.includeHistory || '') === 'true'
-  if (!schoolId || currentUser?.schoolId !== schoolId || !['SCHOOL_ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role || '')) {
+  if (!schoolId || currentUser?.schoolId !== schoolId || currentUser?.role !== 'SCHOOL_ADMIN') {
     throw new Error('School administrator access required')
   }
 
@@ -276,8 +296,8 @@ async function updateLocalClassTeacherAssignment(params: Record<string, unknown>
   const currentUser = useAppStore.getState().currentUser
   const assignmentId = String(params.assignmentId || '')
   if (!assignmentId || currentUser?.role !== 'SCHOOL_ADMIN' || !currentUser?.schoolId) throw new Error('School administrator access required')
-  const [assignment] = await ConnectionManager.query<{ id: string; schoolId: string; classId: string; academicYear: string }>(
-    'SELECT id, schoolId, classId, academicYear FROM ClassTeacherAssignment WHERE id = ? LIMIT 1',
+  const [assignment] = await ConnectionManager.query<{ id: string; schoolId: string; classId: string; academicYear: string; teacherId: string }>(
+    'SELECT id, schoolId, classId, academicYear, teacherId FROM ClassTeacherAssignment WHERE id = ? LIMIT 1',
     [assignmentId],
   )
   if (!assignment || assignment.schoolId !== currentUser.schoolId) throw new Error('Assignment not found')
@@ -288,6 +308,13 @@ async function updateLocalClassTeacherAssignment(params: Record<string, unknown>
   if (params.teacherId !== undefined) {
     const [teacher] = await ConnectionManager.query<{ schoolId: string }>('SELECT schoolId FROM Teacher WHERE id = ? LIMIT 1', [String(params.teacherId)])
     if (!teacher || teacher.schoolId !== currentUser.schoolId) throw new Error('Teacher not found or does not belong to school')
+    if (String(params.teacherId) !== assignment.teacherId) {
+      return assignLocalClassTeacher({
+        id: newLocalId(), schoolId: assignment.schoolId, classId: assignment.classId,
+        academicYear: assignment.academicYear, teacherId: String(params.teacherId),
+        startDate: new Date().toISOString().slice(0, 10),
+      })
+    }
     updates.push('teacherId = ?')
     values.push(String(params.teacherId))
   }
@@ -415,6 +442,7 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
   },
   // Classes
   '/api/shulea/classes': (params, method) => {
+    if (method && method !== 'GET' && useAppStore.getState().currentUser?.role !== 'SCHOOL_ADMIN') throw new Error('Only the School Admin can manage classes')
     if (method === 'POST') return ClassesApi.create(params as unknown as Parameters<typeof ClassesApi.create>[0])
     if (method === 'PUT') return ClassesApi.update(params as unknown as Parameters<typeof ClassesApi.update>[0])
     if (method === 'DELETE') return ClassesApi.delete(params.id as string)
@@ -537,6 +565,7 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
   },
   // Subjects
   '/api/shulea/subjects': (params, method) => {
+    if (method && method !== 'GET' && useAppStore.getState().currentUser?.role !== 'SCHOOL_ADMIN') throw new Error('Only the School Admin can manage subjects')
     if (params.action === 'class-subjects') {
       return ClassesApi.getSubjects(params.classId as string).then(response => {
         if (!response.success) return response
@@ -547,6 +576,8 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
             `SELECT ts.subjectId FROM TeacherSubject ts JOIN Teacher t ON t.id = ts.teacherId WHERE t.userId = ? AND ts.classId = ?`,
             [currentUser.id, String(params.classId || '')],
           ).then(rows => {
+            return ConnectionManager.query<{ id: string }>("SELECT id FROM ClassTeacherAssignment WHERE teacherId = (SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1) AND schoolId = ? AND classId = ? AND status = 'ACTIVE' LIMIT 1", [currentUser.id, currentUser.schoolId, currentUser.schoolId, String(params.classId || '')]).then(classTeacher => {
+            if (classTeacher.length) return response
             assignedIds = new Set(rows.map(row => row.subjectId))
             return {
               success: true,
@@ -559,6 +590,7 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
                 })),
               },
             }
+            })
           })
         }
         return {
@@ -622,6 +654,9 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
   },
   // Exams
   '/api/shulea/exams': (params, method) => {
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+      if (useAppStore.getState().currentUser?.role !== 'SCHOOL_ADMIN') throw new Error('Only the School Admin can manage examinations')
+    }
     if (method === 'POST') return ExamsApi.create(params as unknown as Parameters<typeof ExamsApi.create>[0])
     if (method === 'PUT') return ExamsApi.update(params as unknown as Parameters<typeof ExamsApi.update>[0])
     if (method === 'DELETE') return ExamsApi.delete(params.id as string)
@@ -629,30 +664,68 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     return ExamsApi.list(params)
   },
   // Marks
-  '/api/shulea/marks': (params, method) => {
+  '/api/shulea/marks': async (params, method) => {
+    const actor = useAppStore.getState().currentUser
+    if (method === 'POST' && params.action === 'compute-results') {
+      const classId = String(params.classId || '')
+      if (actor?.role === 'TEACHER') await assertLocalStudentWriteAccess(classId)
+      else if (actor?.role !== 'SCHOOL_ADMIN') throw new Error('Only a Class Teacher or School Admin can compute class results')
+      return computeMarksResults(classId, params.examId as string)
+    }
     if (method === 'POST' && params.action === 'bulk-save') {
+      if (actor?.role === 'TEACHER') {
+        await assertLocalStudentWriteAccess(String(params.classId || ''))
+        for (const mark of (params.marks || []) as Array<{ studentId: string; classSubjectId: string }>) {
+          const classRows = await ConnectionManager.query<{ classId: string }>('SELECT classId FROM ClassSubject WHERE id = ? LIMIT 1', [mark.classSubjectId])
+          if (!classRows[0]) throw new Error('Assigned class subject is unavailable offline')
+          const subjectRows = await ConnectionManager.query<{ subjectId: string }>('SELECT subjectId FROM ClassSubject WHERE id = ? LIMIT 1', [mark.classSubjectId])
+          await assertLocalMarksAccess(classRows[0].classId, subjectRows[0]?.subjectId || '')
+          await assertLocalStudentClassScope(classRows[0].classId, mark.studentId)
+        }
+      }
       return bulkSaveMarks(
         params.classId as string,
         params.marks as Array<{ studentId: string; classSubjectId: string; examId: string; marks?: number | null }>
       )
     }
-    if (method === 'POST' && params.action === 'compute-results') {
-      return computeMarksResults(params.classId as string, params.examId as string)
+    if (method === 'POST' || method === 'PUT') {
+      if (actor?.role === 'TEACHER') {
+        const mark = params as unknown as { studentId: string; classSubjectId: string }
+        const classRows = await ConnectionManager.query<{ classId: string; subjectId: string }>('SELECT classId, subjectId FROM ClassSubject WHERE id = ? LIMIT 1', [mark.classSubjectId])
+        if (!classRows[0]) throw new Error('Assigned class subject is unavailable offline')
+        await assertLocalStudentWriteAccess(classRows[0].classId, mark.studentId)
+        await assertLocalMarksAccess(classRows[0].classId, classRows[0].subjectId)
+        await assertLocalStudentClassScope(classRows[0].classId, mark.studentId)
+      } else if (actor?.role !== 'SCHOOL_ADMIN') throw new Error('Academic access denied')
     }
     if (method === 'POST') return MarksApi.create(params as unknown as Parameters<typeof MarksApi.create>[0])
     if (method === 'PUT') return MarksApi.update(params as unknown as Parameters<typeof MarksApi.update>[0])
     if (method === 'DELETE') return MarksApi.delete(params.id as string)
     if (params.id) return MarksApi.getById(params.id as string)
     if (params.classId && params.examId) {
-      return MarksApi.entryData({
+      const response = await MarksApi.entryData({
         classId: params.classId as string,
         examId: params.examId as string,
         subjectId: params.subjectId as string | undefined,
       })
+      if (!response.success || actor?.role !== 'TEACHER' || !response.data) return response
+      const classTeacher = await ConnectionManager.query<{ id: string }>("SELECT id FROM ClassTeacherAssignment WHERE teacherId = (SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1) AND schoolId = ? AND classId = ? AND status = 'ACTIVE' LIMIT 1", [actor.id, actor.schoolId, actor.schoolId, String(params.classId)])
+      if (classTeacher.length) return response
+      const assigned = await ConnectionManager.query<{ subjectId: string }>(`SELECT subjectId FROM TeacherSubject WHERE teacherId = (SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1) AND classId = ?`, [actor.id, actor.schoolId, String(params.classId)])
+      const allowedIds = new Set(assigned.map(item => item.subjectId))
+      const classSubjects = response.data.classSubjects.filter(item => allowedIds.has(item.subjectId))
+      const classSubjectIds = new Set(classSubjects.map(item => item.id))
+      return { ...response, data: { ...response.data, classSubjects, marks: response.data.marks.filter(mark => classSubjectIds.has(mark.classSubjectId)) } }
     }
     return MarksApi.list(params)
   },
-  '/api/shulea/attendance': (params, method) => {
+  '/api/shulea/attendance': async (params, method) => {
+    if (!params.classId) throw new Error('Class ID is required')
+    if (method === 'POST') {
+      for (const record of (params.records || []) as Array<{ studentId: string }>) await assertLocalStudentWriteAccess(String(params.classId), record.studentId)
+    } else {
+      await assertLocalStudentWriteAccess(String(params.classId))
+    }
     if (method === 'POST') {
       return AttendanceApi.save({
         classId: params.classId as string,
@@ -690,16 +763,27 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
         leadership?: string
         sports?: string
       }>
+      for (const record of records) await assertLocalStudentWriteAccess(String(record.classId || params.classId || ''), record.studentId)
       return TabiaApi.bulkSave(
         (params.classId as string) || records[0]?.classId || '',
         (params.examId as string) || records[0]?.examId || '',
         records.map(({ classId: _classId, examId: _examId, ...record }) => record)
       )
     }
-    if (method === 'POST') return TabiaApi.create(params as unknown as Parameters<typeof TabiaApi.create>[0])
-    if (method === 'PUT') return TabiaApi.update(params as unknown as Parameters<typeof TabiaApi.update>[0])
-    if (method === 'DELETE') return TabiaApi.delete(params.id as string)
-    if (params.id) return TabiaApi.getById(params.id as string)
+    if (method === 'POST') {
+      await assertLocalStudentWriteAccess(String(params.classId || ''), String(params.studentId || ''))
+      return TabiaApi.create(params as unknown as Parameters<typeof TabiaApi.create>[0])
+    }
+    if (method === 'PUT' || method === 'DELETE' || params.id) {
+      const tabiaRows = await ConnectionManager.query<{ classId: string; studentId: string }>('SELECT classId, studentId FROM Tabia WHERE id = ? LIMIT 1', [String(params.id || '')])
+      const tabia = tabiaRows[0]
+      if (!tabia) throw new Error('Tabia record not found')
+      await assertLocalStudentWriteAccess(tabia.classId, tabia.studentId)
+      if (method === 'PUT') return TabiaApi.update(params as unknown as Parameters<typeof TabiaApi.update>[0])
+      if (method === 'DELETE') return TabiaApi.delete(params.id as string)
+      return TabiaApi.getById(params.id as string)
+    }
+    if (params.classId) await assertLocalStudentWriteAccess(String(params.classId), params.studentId ? String(params.studentId) : undefined)
     const recordsResponse = await TabiaApi.list(params)
     if (!recordsResponse.success) return recordsResponse
 
@@ -722,7 +806,29 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     return recordsResponse
   },
   // Results
-  '/api/shulea/results': (params, method) => {
+  '/api/shulea/results': async (params, method) => {
+    const actor = useAppStore.getState().currentUser
+    if (actor?.role === 'SUPER_ADMIN' || !actor?.schoolId) throw new Error('School academic report access denied')
+    if (method && method !== 'GET' && actor.role !== 'SCHOOL_ADMIN') throw new Error('Only the School Admin can modify report records')
+    if (actor.role === 'TEACHER') {
+      let classId = String(params.classId || '')
+      if (!classId && params.studentId) {
+        const student = await ConnectionManager.query<{ classId: string }>('SELECT classId FROM Student WHERE id = ? AND schoolId = ? LIMIT 1', [String(params.studentId), actor.schoolId])
+        classId = student[0]?.classId || ''
+      }
+      if (!classId && params.examId) {
+        const exam = await ConnectionManager.query<{ classId: string }>('SELECT classId FROM Exam WHERE id = ? AND schoolId = ? LIMIT 1', [String(params.examId), actor.schoolId])
+        classId = exam[0]?.classId || ''
+      }
+      const teacher = await ConnectionManager.query<{ id: string }>('SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1', [actor.id, actor.schoolId])
+      if (!classId || !teacher[0]) throw new Error('A school class and teacher profile are required')
+      const classAssignment = await ConnectionManager.query<{ id: string }>("SELECT id FROM ClassTeacherAssignment WHERE teacherId = ? AND schoolId = ? AND classId = ? AND status = 'ACTIVE' LIMIT 1", [teacher[0].id, actor.schoolId, classId])
+      const subjectAssignment = params.action === 'subject-analysis'
+        ? await ConnectionManager.query<{ id: string }>('SELECT id FROM TeacherSubject WHERE teacherId = ? AND classId = ? LIMIT 1', [teacher[0].id, classId])
+        : []
+      if (!classAssignment.length && !subjectAssignment.length) throw new Error('You can only access reports for your assigned class or subject')
+      if (!classAssignment.length && params.action !== 'subject-analysis') throw new Error('Class-wide reports require a Class Teacher assignment')
+    }
     if (params.action === 'summary') {
       return ResultsApi.summary(params.examId as string, params.classId as string)
     }
@@ -733,7 +839,14 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
       return ResultsApi.bottomStudents(params.examId as string, params.classId as string | undefined, Number(params.limit || 10))
     }
     if (params.action === 'subject-analysis') {
-      return ResultsApi.subjectAnalysis(params.examId as string, params.classId as string)
+      return (async () => {
+        const response = await ResultsApi.subjectAnalysis(params.examId as string, params.classId as string)
+        const actor = useAppStore.getState().currentUser
+        if (!response.success || actor?.role !== 'TEACHER' || !response.data) return response
+        const assigned = await ConnectionManager.query<{ subjectId: string }>(`SELECT subjectId FROM TeacherSubject WHERE teacherId = (SELECT id FROM Teacher WHERE userId = ? AND schoolId = ? LIMIT 1) AND classId = ?`, [actor.id, actor.schoolId, String(params.classId)])
+        const allowedIds = new Set(assigned.map(item => item.subjectId))
+        return { ...response, data: { analysis: response.data.analysis.filter((item) => allowedIds.has(String((item as Record<string, unknown>).subjectId))) } }
+      })()
     }
     if (params.action === 'overall-results') {
       return ResultsApi.overallResults(params.examId as string, params.classId as string)
@@ -771,7 +884,27 @@ const endpointMap: Record<string, (params: Record<string, unknown>, method?: str
     if (method === 'POST') return SeedApi.seedDefaults(params)
     throw new Error('Seed API only supports POST method')
   },
-  '/api/shulea/sms': (params, method) => {
+  '/api/shulea/sms': async (params, method) => {
+    const actor = useAppStore.getState().currentUser
+    if (actor?.role === 'TEACHER') {
+      let classId = String(params.classId || '')
+      if (!classId && params.studentId) {
+        const student = await ConnectionManager.query<{ classId: string }>(
+          'SELECT classId FROM Student WHERE id = ? AND schoolId = ? LIMIT 1', [String(params.studentId), actor.schoolId],
+        )
+        classId = student[0]?.classId || ''
+      }
+      if (!classId && params.examId) {
+        const exam = await ConnectionManager.query<{ classId: string }>(
+          'SELECT classId FROM Exam WHERE id = ? AND schoolId = ? LIMIT 1', [String(params.examId), actor.schoolId],
+        )
+        classId = exam[0]?.classId || ''
+      }
+      if (!classId) throw new Error('Class-wide SMS access requires an assigned class')
+      await assertLocalStudentWriteAccess(classId)
+    } else if (actor?.role !== 'SCHOOL_ADMIN') {
+      throw new Error('SMS access is limited to the School Admin and assigned Class Teachers')
+    }
     if (method === 'POST') {
       return SmsApi.saveHistory(params as Parameters<typeof SmsApi.saveHistory>[0])
     }
@@ -991,6 +1124,19 @@ async function prepareOfflineOptions(endpoint: string, options?: RequestInit): P
         if (body.action === 'assign' && !body.id) {
           return { ...options, body: JSON.stringify({ ...body, id: newLocalId() }) }
         }
+        if (body.action === 'update' && typeof body.assignmentId === 'string' && typeof body.teacherId === 'string') {
+          const rows = await ConnectionManager.query<{ schoolId: string; classId: string; academicYear: string; teacherId: string }>(
+            'SELECT schoolId, classId, academicYear, teacherId FROM ClassTeacherAssignment WHERE id = ? LIMIT 1', [body.assignmentId],
+          )
+          const assignment = rows[0]
+          if (assignment && assignment.teacherId !== body.teacherId) {
+            return { ...options, body: JSON.stringify({
+              ...body, action: 'assign', id: newLocalId(), schoolId: assignment.schoolId,
+              classId: assignment.classId, academicYear: assignment.academicYear,
+              startDate: new Date().toISOString().slice(0, 10),
+            }) }
+          }
+        }
       } catch {
         return options
       }
@@ -1189,6 +1335,22 @@ export async function parseExcelMarks(file: File): Promise<ExcelMarkRow[]> {
   })
 }
 
+export async function getExcelMarkMetadata(file: File): Promise<{ classId?: string; examId?: string; subjectId?: string } | null> {
+  if (!/\.xlsx?$/i.test(file.name)) return null
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1 }) as unknown[][]
+  const metadata: { classId?: string; examId?: string; subjectId?: string } = {}
+  for (const row of rows.slice(0, 8)) {
+    const key = String(row?.[0] || '').trim().toLowerCase()
+    const value = String(row?.[1] || '').trim()
+    if (key === 'class id') metadata.classId = value
+    if (key === 'exam id') metadata.examId = value
+    if (key === 'subject id') metadata.subjectId = value
+  }
+  return metadata.classId || metadata.examId || metadata.subjectId ? metadata : null
+}
+
 function parseDelimitedMarks(text: string): ExcelMarkRow[] {
   const cleanText = text.replace(/^\uFEFF/, '').trim()
   if (!cleanText) return []
@@ -1268,7 +1430,7 @@ function parseMarkRows(rawRows: (string | number)[][]): ExcelMarkRow[] {
     const sn = parseInt(String(row[0] || '0'), 10) || rows.length + 1
     const studentName = String(row[1] || '').trim()
     const marksValue = String(row[2] ?? '').trim()
-    const marks = marksValue === '' ? 0 : Number(marksValue)
+    const marks = marksValue === '' ? Number.NaN : Number(marksValue)
     const grade = String(row[3] || '').trim()
 
     if (studentName && Number.isFinite(marks)) {
@@ -1285,10 +1447,14 @@ function parseMarkRows(rawRows: (string | number)[][]): ExcelMarkRow[] {
  */
 export function generateExcelMarks(
   data: Array<{ sn: number; studentName: string; marks: number; grade: string }>,
-  options: { examName?: string; className?: string; subjectName?: string } = {}
+  options: { examName?: string; className?: string; subjectName?: string; classId?: string; examId?: string; subjectId?: string } = {}
 ): Blob {
   // Prepare worksheet data
+  const metadataRows = options.classId || options.examId || options.subjectId
+    ? [['CLASS ID', options.classId || ''], ['EXAM ID', options.examId || ''], ['SUBJECT ID', options.subjectId || ''], ['', '', '', '']]
+    : []
   const wsData = [
+    ...metadataRows,
     ['S/N', 'STUDENT NAME', 'MARKS', 'GRADE'],
     ...data.map(row => [row.sn, row.studentName, row.marks, row.grade])
   ]

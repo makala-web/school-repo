@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getAuthenticatedUser } from '@/lib/server-auth';
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger';
 
 /**
  * GET /api/shulea/class-teacher-assignments
@@ -22,15 +23,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Verify actor has access to school (Super Admin or School Admin)
+    // Teacher assignments are school academic data; only that school's admin manages them.
     const actor = await getAuthenticatedUser(request);
     if (!actor) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
     if (actorUserId && actorUserId !== actor.id) return NextResponse.json({ error: 'Session user mismatch' }, { status: 403 });
 
-    const isAuthorized = actor.role === 'SUPER_ADMIN' || 
-      (actor.role === 'SCHOOL_ADMIN' && actor.schoolId === schoolId);
+    const isAuthorized = actor.role === 'SCHOOL_ADMIN' && actor.schoolId === schoolId;
 
     if (!isAuthorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
@@ -76,21 +76,21 @@ export async function POST(request: NextRequest) {
 
     // Verify actor
     const actor = await getAuthenticatedUser(request);
-    if (!actor || !['SCHOOL_ADMIN', 'SUPER_ADMIN'].includes(actor.role)) {
+    if (!actor || actor.role !== 'SCHOOL_ADMIN') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
     if (actorUserId && actorUserId !== actor.id) return NextResponse.json({ error: 'Session user mismatch' }, { status: 403 });
 
     if (action === 'assign') {
-      return handleAssignClassTeacher(data, actor);
+      return handleAssignClassTeacher(data, actor, request.headers.get('x-shulea-operation-id'));
     }
 
     if (action === 'update') {
-      return handleUpdateAssignment(data, actor);
+      return handleUpdateAssignment(data, actor, request.headers.get('x-shulea-operation-id'));
     }
 
     if (action === 'remove') {
-      return handleRemoveAssignment(data, actor);
+      return handleRemoveAssignment(data, actor, request.headers.get('x-shulea-operation-id'));
     }
 
     if (action === 'get-by-teacher') {
@@ -117,11 +117,11 @@ async function handleAssignClassTeacher(data: {
   teacherId: string;
   academicYear: string;
   startDate: string;
-}, actor: any) {
+}, actor: any, operationId?: string | null) {
   const { id, schoolId, classId, teacherId, academicYear, startDate } = data;
 
   // Validate school access
-  if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== schoolId) {
+  if (actor.schoolId !== schoolId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
@@ -158,10 +158,11 @@ async function handleAssignClassTeacher(data: {
     const existingActive = await tx.classTeacherAssignment.findFirst({
       where: { schoolId, classId, academicYear, status: 'ACTIVE' },
     })
-    if (existingActive?.teacherId === teacherId) return { assignment: existingActive, alreadyExists: true }
+    if (existingActive?.teacherId === teacherId) return { assignment: existingActive, alreadyExists: true, previousAssignment: null }
 
+    let previousAssignment: typeof existingActive = null
     if (existingActive) {
-      await tx.classTeacherAssignment.update({
+      previousAssignment = await tx.classTeacherAssignment.update({
         where: { id: existingActive.id },
         data: { status: 'INACTIVE', endDate: today },
       })
@@ -186,10 +187,19 @@ async function handleAssignClassTeacher(data: {
         details: `${teacher.name} assigned as class teacher for ${classRecord.fullName} (${academicYear})`,
       },
     })
-    return { assignment, alreadyExists: false }
+    return { assignment, alreadyExists: false, previousAssignment }
   })
 
-  const { assignment, alreadyExists } = result
+  const { assignment, alreadyExists, previousAssignment } = result
+  if (!alreadyExists) {
+    const classSnapshot = await db.class.findUnique({ where: { id: classId } })
+    await recordSyncLedgerChanges(schoolId, [
+      ...(previousAssignment ? [{ entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId: previousAssignment.id, payload: previousAssignment }] : []),
+      { entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId: assignment.id, payload: assignment },
+      ...(classSnapshot ? [{ entityType: 'CLASS', entityId: classSnapshot.id, payload: classSnapshot }] : []),
+      { entityType: 'TEACHER', entityId: teacher.id, payload: teacher },
+    ], operationId)
+  }
   if (alreadyExists) return NextResponse.json({
     message: 'This teacher is already assigned to the selected class for this academic year.',
     assignment,
@@ -207,7 +217,7 @@ async function handleUpdateAssignment(data: {
   teacherId?: string;
   status?: string;
   endDate?: string;
-}, actor: any) {
+}, actor: any, operationId?: string | null) {
   const { assignmentId, ...updateData } = data;
 
   const assignment = await db.classTeacherAssignment.findUnique({
@@ -222,7 +232,7 @@ async function handleUpdateAssignment(data: {
   }
 
   // Verify school access
-  if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== assignment.schoolId) {
+  if (actor.schoolId !== assignment.schoolId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
@@ -241,6 +251,17 @@ async function handleUpdateAssignment(data: {
     }
     if (newTeacher.user && newTeacher.user.role !== 'TEACHER') {
       return NextResponse.json({ error: 'Only invited teacher accounts can be assigned as Class Teachers' }, { status: 400 });
+    }
+    if (updateData.teacherId !== assignment.teacherId) {
+      // Keep the previous teacher and date range for historical report cards.
+      // Reassignment is represented by a new active assignment row.
+      return handleAssignClassTeacher({
+        schoolId: assignment.schoolId,
+        classId: assignment.classId,
+        teacherId: updateData.teacherId,
+        academicYear: assignment.academicYear,
+        startDate: new Date().toISOString().slice(0, 10),
+      }, actor, operationId)
     }
   }
 
@@ -277,6 +298,7 @@ async function handleUpdateAssignment(data: {
     where: { classId: assignment.classId, schoolId: assignment.schoolId, academicYear: assignment.academicYear, status: 'ACTIVE' },
     select: { teacherId: true },
   })
+
   const school = await tx.school.findUnique({ where: { id: assignment.schoolId }, select: { academicYear: true } })
   if (!school?.academicYear || school.academicYear === assignment.academicYear) {
     await tx.class.update({ where: { id: assignment.classId }, data: { classTeacherId: nextActiveAssignment?.teacherId || null } })
@@ -294,6 +316,13 @@ async function handleUpdateAssignment(data: {
   return updated
   })
 
+  const classSnapshot = await db.class.findUnique({ where: { id: assignment.classId } })
+  await recordSyncLedgerChanges(assignment.schoolId, [
+    { entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId: result.id, payload: result },
+    ...(classSnapshot ? [{ entityType: 'CLASS', entityId: classSnapshot.id, payload: classSnapshot }] : []),
+    { entityType: 'TEACHER', entityId: result.teacherId, payload: result.teacher },
+  ], operationId)
+
   return NextResponse.json({
     message: 'Assignment updated successfully',
     assignment: result
@@ -302,7 +331,7 @@ async function handleUpdateAssignment(data: {
 
 async function handleRemoveAssignment(data: {
   assignmentId: string;
-}, actor: any) {
+}, actor: any, operationId?: string | null) {
   const { assignmentId } = data;
 
   const assignment = await db.classTeacherAssignment.findUnique({
@@ -317,7 +346,7 @@ async function handleRemoveAssignment(data: {
   }
 
   // Verify school access
-  if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== assignment.schoolId) {
+  if (actor.schoolId !== assignment.schoolId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
   }
 
@@ -352,6 +381,13 @@ async function handleRemoveAssignment(data: {
     return removed
   })
 
+  const classSnapshot = await db.class.findUnique({ where: { id: assignment.classId } })
+  await recordSyncLedgerChanges(assignment.schoolId, [
+    { entityType: 'CLASS_TEACHER_ASSIGNMENT', entityId: updated.id, payload: updated },
+    ...(classSnapshot ? [{ entityType: 'CLASS', entityId: classSnapshot.id, payload: classSnapshot }] : []),
+    { entityType: 'TEACHER', entityId: updated.teacherId, payload: updated.teacher },
+  ], operationId)
+
   return NextResponse.json({
     message: 'Assignment removed successfully',
     assignment: updated
@@ -368,7 +404,7 @@ async function handleGetByTeacher(data: {
     where: { id: teacherId }
   });
 
-  if (!teacher || (actor.role !== 'SUPER_ADMIN' && teacher.schoolId !== actor.schoolId)) {
+  if (!teacher || (actor.role !== 'SCHOOL_ADMIN' || teacher.schoolId !== actor.schoolId)) {
     return NextResponse.json(
       { error: 'Teacher not found' },
       { status: 404 }

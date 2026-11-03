@@ -18,6 +18,11 @@ export class SchemaManager {
       await this.ensureColumn('User', 'activationStartDate', 'TEXT')
       await this.ensureColumn('User', 'activationExpiryDate', 'TEXT')
       await this.ensureColumn('MarksEntry', 'recordedByUserId', 'TEXT')
+      await this.ensureColumn('StudentResult', 'classTeacherName', 'TEXT')
+      await this.ensureColumn('StudentResult', 'classTeacherShortName', 'TEXT')
+      await this.ensureColumn('StudentResult', 'classTeacherSign', 'TEXT')
+      await this.ensureColumn('StudentResult', 'headTeacherName', 'TEXT')
+      await this.ensureColumn('StudentResult', 'headTeacherSign', 'TEXT')
 
       // Index creation is also persisted once. IF NOT EXISTS keeps this safe
       // across refreshes and upgrades of an existing local database.

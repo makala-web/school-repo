@@ -11,6 +11,7 @@ import {
   getReportCardCompression, buildReportFooter, getLocalizedReportComments
 } from '@/lib/print-templates'
 import { toast } from 'sonner'
+import { getPrivateTeacherMarkDrafts } from '@/services/database/OfflineSyncQueue'
 import {
   Loader2, Printer, BarChart3, Trophy, TrendingDown, FileText, Languages, Calendar, Save,
   Users, BookOpen, Download, Share2, FileSpreadsheet, Eye
@@ -219,10 +220,11 @@ function getOrdinal(n: number, lang: 'en' | 'sw' = 'en'): string {
 }
 
 export default function ReportsView() {
-  const { currentSchool, schoolType } = useAppStore()
+  const { currentSchool, schoolType, currentUser } = useAppStore()
   const { printPdf, sharePdf, isPrinting, language, setLanguage, toggleLanguage } = usePrint({ defaultLanguage: 'en' })
   const [exams, setExams] = useState<ExamItem[]>([])
   const [classes, setClasses] = useState<ClassItem[]>([])
+  const [classTeacherClassIds, setClassTeacherClassIds] = useState<string[]>([])
   const [students, setStudents] = useState<StudentItem[]>([])
   const [selectedExam, setSelectedExam] = useState('')
   const [selectedClass, setSelectedClass] = useState('')
@@ -335,7 +337,7 @@ export default function ReportsView() {
 
   useEffect(() => {
     loadData()
-  }, [currentSchool])
+  }, [currentSchool, currentUser?.id, currentUser?.role])
 
   async function loadData() {
     try {
@@ -344,8 +346,28 @@ export default function ReportsView() {
         apiCall(`/api/shulea/classes?schoolId=${currentSchool?.id || ''}`),
         apiCall(`/api/shulea/school?schoolId=${currentSchool?.id || ''}`),
       ])
-      const loadedExams: ExamItem[] = examData.exams || []
+      let loadedExams: ExamItem[] = examData.exams || []
       const loadedClasses: ClassItem[] = classData.classes || []
+      if (currentUser?.role === 'TEACHER') {
+        const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${currentSchool?.id || ''}`)
+        const teacherId = teacherData.teachers?.[0]?.id
+        if (teacherId) {
+          const assignmentData = await apiCall(`/api/shulea/teacher-classes?teacherId=${teacherId}&schoolId=${currentSchool?.id || ''}&actorUserId=${currentUser.id}`)
+          const classTeacherIds = (assignmentData.classTeacherAssignments || []).map((item: { id: string }) => item.id)
+          setClassTeacherClassIds(classTeacherIds)
+          const accessibleClassIds = new Set<string>([
+            ...classTeacherIds,
+            ...(assignmentData.subjectOnlyAssignments || []).map((item: { id: string }) => item.id),
+          ])
+          const allowedClassIds = new Set(loadedClasses.filter(cls => accessibleClassIds.has(cls.id)).map(cls => cls.id))
+          loadedExams = loadedExams.filter(exam => allowedClassIds.has(exam.class?.id || ''))
+        } else {
+          setClassTeacherClassIds([])
+          loadedExams = []
+        }
+      } else {
+        setClassTeacherClassIds([])
+      }
       setExams(loadedExams)
       setClasses(loadedClasses)
 
@@ -386,6 +408,13 @@ export default function ReportsView() {
       setSelectedClass(examClassId)
     }
   }, [getExamClassId, selectedClass, selectedExam])
+
+  const canViewClassReports = currentUser?.role !== 'TEACHER' || classTeacherClassIds.includes(getActiveClassId())
+  useEffect(() => {
+    if (currentUser?.role === 'TEACHER' && !canViewClassReports && activeTab !== 'subject-report') {
+      setActiveTab('subject-report')
+    }
+  }, [activeTab, canViewClassReports, currentUser?.role])
 
   // Load students for report card tab
   useEffect(() => {
@@ -703,11 +732,19 @@ export default function ReportsView() {
       const subjectIdToUse = selectedSubjectInfo?.subjectId || subjectReportSubjectId
       const data = await apiCall(`/api/shulea/marks?classId=${classId}&examId=${selectedExam}&subjectId=${subjectIdToUse}`)
       
-      const marks: Array<{
+      const officialMarks: Array<{
         studentId: string; student?: { fullName: string; gender: string }; marks: number | null; grade: string | null
       }> = data.marks || []
       const fetchedStudents: StudentItem[] = data.students || []
       if (fetchedStudents.length > 0) setStudents(fetchedStudents)
+
+      const isPrivateSubjectTeacher = currentUser?.role === 'TEACHER' && !classTeacherClassIds.includes(classId)
+      const privateDrafts = isPrivateSubjectTeacher && currentUser?.id && currentUser.schoolId
+        ? await getPrivateTeacherMarkDrafts({ userId: currentUser.id, schoolId: currentUser.schoolId, classId, examId: selectedExam, subjectId: subjectIdToUse })
+        : []
+      const marks = isPrivateSubjectTeacher
+        ? privateDrafts.map(draft => ({ studentId: draft.studentId, marks: draft.marks, grade: draft.grade }))
+        : officialMarks
 
       const studentMap = new Map(fetchedStudents.map(student => [student.id, student]))
       setSubjectReportData(marks.map(m => {
@@ -2536,21 +2573,21 @@ export default function ReportsView() {
                   </Select>
                 </div>
               )}
-              <div className="space-y-2 xl:col-span-2 min-w-0">
+              {canViewClassReports && <div className="space-y-2 xl:col-span-2 min-w-0">
                 <Label className="text-sm font-medium">{t('closingDate')}</Label>
                 <Input type="date" value={closingDate} onChange={(e) => setClosingDate(e.target.value)} className="h-10 text-sm" />
-              </div>
-              <div className="space-y-2 xl:col-span-2 min-w-0">
+              </div>}
+              {canViewClassReports && <div className="space-y-2 xl:col-span-2 min-w-0">
                 <Label className="text-sm font-medium">{t('openingDate')}</Label>
                 <Input type="date" value={openingDate} onChange={(e) => setOpeningDate(e.target.value)} className="h-10 text-sm" />
-              </div>
-              <div className="space-y-2 xl:col-span-1 min-w-0">
+              </div>}
+              {currentUser?.role === 'SCHOOL_ADMIN' && canViewClassReports && <div className="space-y-2 xl:col-span-1 min-w-0">
                 <Label className="invisible">Save dates</Label>
                 <Button variant="outline" onClick={saveReportDates} disabled={!selectedExam || !selectedClass} className="w-full gap-2 h-10 text-sm">
                   <Save className="w-4 h-4" />
                   Save
                 </Button>
-              </div>
+              </div>}
               <div className="space-y-2 xl:col-span-2 min-w-0">
                 <Label className="text-sm font-medium">Language</Label>
                 <div className="flex items-center gap-2 rounded-lg border bg-white px-4 py-2.5 shadow-sm">
@@ -2576,42 +2613,45 @@ export default function ReportsView() {
         <div className="flex-shrink-0 bg-background pt-3">
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
             <TabsList className="inline-grid h-auto min-h-10 w-max min-w-full grid-cols-5 gap-1">
-              <TabsTrigger value="summary" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">
-                <span className="hidden sm:inline">Class </span>Summary
-              </TabsTrigger>
-              <TabsTrigger value="overall" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">
-                <span className="hidden sm:inline">Overall </span>Results
-              </TabsTrigger>
-              <TabsTrigger value="top-bottom" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">
-                Top/Bottom
-              </TabsTrigger>
-              <TabsTrigger value="subject-analysis" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">
-                <span className="hidden sm:inline">Subject </span>Analysis
-              </TabsTrigger>
-              <TabsTrigger value="report-card" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">
-                Report<span className="hidden sm:inline"> Card</span>
-              </TabsTrigger>
+              {canViewClassReports && <>
+                <TabsTrigger value="summary" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Class </span>Summary</TabsTrigger>
+                <TabsTrigger value="overall" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Overall </span>Results</TabsTrigger>
+                <TabsTrigger value="top-bottom" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">Top/Bottom</TabsTrigger>
+                <TabsTrigger value="subject-analysis" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm"><span className="hidden sm:inline">Subject </span>Analysis</TabsTrigger>
+                <TabsTrigger value="report-card" className="min-w-[96px] px-2 py-2 text-[11px] sm:text-sm">Report<span className="hidden sm:inline"> Card</span></TabsTrigger>
+              </>}
+              {currentUser?.role === 'TEACHER' && <TabsTrigger value="subject-report" className="min-w-[140px] px-2 py-2 text-[11px] sm:text-sm">My Subject Reports</TabsTrigger>}
             </TabsList>
           </div>
         </div>
 
         {/* Report Content - Scrollable */}
         <div className="reports-content-scroll flex-1 min-h-0 overflow-y-auto overflow-x-auto overscroll-contain px-1 pb-8 pr-2 sm:px-0 sm:pb-2">
-          <TabsContent value="summary" className="mt-4 w-full min-w-0">
+          {canViewClassReports && <TabsContent value="summary" className="mt-4 w-full min-w-0">
             {renderSummary()}
-          </TabsContent>
-          <TabsContent value="overall" className="mt-4 w-full min-w-0">
+          </TabsContent>}
+          {canViewClassReports && <TabsContent value="overall" className="mt-4 w-full min-w-0">
             {renderOverallResults()}
-          </TabsContent>
-          <TabsContent value="top-bottom" className="mt-4 w-full min-w-0">
+          </TabsContent>}
+          {canViewClassReports && <TabsContent value="top-bottom" className="mt-4 w-full min-w-0">
             {renderTopBottom()}
-          </TabsContent>
-          <TabsContent value="subject-analysis" className="mt-4 w-full min-w-0">
+          </TabsContent>}
+          {canViewClassReports && <TabsContent value="subject-analysis" className="mt-4 w-full min-w-0">
             {renderSubjectAnalysis()}
-          </TabsContent>
-          <TabsContent value="report-card" className="mt-4 w-full min-w-0">
+          </TabsContent>}
+          {canViewClassReports && <TabsContent value="report-card" className="mt-4 w-full min-w-0">
             {renderReportCard()}
-          </TabsContent>
+          </TabsContent>}
+          {currentUser?.role === 'TEACHER' && <TabsContent value="subject-report" className="mt-4 w-full min-w-0">
+            <Card><CardContent className="flex flex-col items-center gap-3 p-8 text-center">
+              <BookOpen className="h-9 w-9 text-emerald-600" />
+              <h2 className="text-lg font-semibold">Reports for your assigned subjects</h2>
+              <p className="max-w-xl text-sm text-muted-foreground">Choose one of your assigned subjects to view and print its marks report. Class-wide results are available to the School Admin and the assigned Class Teacher.</p>
+              <Button onClick={() => { setSubjectReportOpen(true); setSubjectReportData(null); setSubjectReportMaxMarks(schoolType === 'SECONDARY' ? '100' : '50') }} disabled={!selectedClass || !selectedExam}>
+                <Printer className="mr-2 h-4 w-4" />Open Subject Report
+              </Button>
+            </CardContent></Card>
+          </TabsContent>}
         </div>
       </Tabs>
 

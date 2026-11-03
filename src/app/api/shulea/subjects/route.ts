@@ -91,10 +91,12 @@ async function handleGetClassSubjects(request: NextRequest) {
     if (actor.role === 'TEACHER' && !(await canAccessClass(actor, classId, { allowSubjectAssignment: true }))) {
       return NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 })
     }
-    const assignmentIds = actor.role === 'TEACHER'
+    const teacher = actor.role === 'TEACHER' ? await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } }) : null
+    const isClassTeacher = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId, schoolId: actor.schoolId || '', status: 'ACTIVE' }, select: { id: true } }) : null
+    const assignmentIds = actor.role === 'TEACHER' && !isClassTeacher
       ? (await db.teacherSubject.findMany({ where: { teacher: { userId: actor.id, schoolId: actor.schoolId }, classId, subject: { schoolId: actor.schoolId } }, select: { subjectId: true } })).map(item => item.subjectId)
       : undefined
-    if (actor.role === 'TEACHER' && !assignmentIds?.length) return NextResponse.json({ error: 'Teacher has no subject assignment for this class' }, { status: 403 })
+    if (actor.role === 'TEACHER' && !isClassTeacher && !assignmentIds?.length) return NextResponse.json({ error: 'Teacher has no subject or class teacher assignment for this class' }, { status: 403 })
     const classSubjects = await db.classSubject.findMany({
       where: { classId, ...(assignmentIds ? { subjectId: { in: assignmentIds } } : {}) },
       include: {

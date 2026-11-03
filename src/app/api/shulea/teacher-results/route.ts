@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     if (!actor) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
+    if (actor.role === 'SUPER_ADMIN') return NextResponse.json({ error: 'Platform administrators cannot access school academic results' }, { status: 403 });
     if (actorUserId !== actor.id) {
       return NextResponse.json({ error: 'Session user mismatch' }, { status: 403 });
     }

@@ -291,6 +291,11 @@ export const ResultsApi = {
 
       const school = await SchoolRepository.getById(student.schoolId as string)
       const result = await ResultsRepository.getByStudentAndExam(studentId, examId)
+      const resultSnapshotRows = await conn.query<Record<string, unknown>>(
+        'SELECT classTeacherName, classTeacherShortName, classTeacherSign, headTeacherName, headTeacherSign FROM StudentResult WHERE studentId = ? AND examId = ? LIMIT 1',
+        [studentId, examId],
+      )
+      const snapshot = resultSnapshotRows[0]
       const tabiaRows = await TabiaRepository.getAll({ studentId, classId: student.classId as string, examId })
       const marks = await MarksRepository.getAll({ studentId, examId, classId: student.classId as string })
       const teacherRows = await conn.query<Record<string, unknown>>(`
@@ -300,12 +305,19 @@ export const ResultsApi = {
         WHERE ts.classId = ?
       `, [student.classId])
       const classTeacherRows = await conn.query<Record<string, unknown>>(`
-        SELECT t.name, t.shortName, t.sign
+        SELECT t.name, t.shortName, t.sign, a.startDate, a.endDate
         FROM ClassTeacherAssignment a
         JOIN Teacher t ON t.id = a.teacherId
-        WHERE a.schoolId = ? AND a.classId = ? AND a.academicYear = ? AND a.status = 'ACTIVE'
-        ORDER BY a.startDate DESC LIMIT 1
+        WHERE a.schoolId = ? AND a.classId = ? AND a.academicYear = ?
+        ORDER BY CASE WHEN a.status = 'ACTIVE' THEN 0 ELSE 1 END, a.startDate DESC
       `, [student.schoolId, student.classId, exam.academicYear])
+      const examDate = exam.examDate ? new Date(exam.examDate).getTime() : null
+      const assignmentAtExam = classTeacherRows.find(row => {
+        if (examDate === null) return row.endDate == null
+        const start = row.startDate ? new Date(String(row.startDate)).getTime() : Number.NEGATIVE_INFINITY
+        const end = row.endDate ? new Date(String(row.endDate)).getTime() : Number.POSITIVE_INFINITY
+        return start <= examDate && examDate <= end
+      }) || classTeacherRows[0]
       const teacherMap = new Map(teacherRows.map(row => [row.subjectId as string, row.teacherName as string]))
 
       return ApiClient.success({
@@ -325,7 +337,11 @@ export const ResultsApi = {
             academicYear: student.class_academicYear || null,
             term: student.class_term || null,
           },
-          school: school || null,
+          school: school ? {
+            ...school,
+            headTeacherName: snapshot?.headTeacherName || school.headTeacherName,
+            headTeacherSign: snapshot?.headTeacherSign || school.headTeacherSign,
+          } : null,
           exam: {
             id: exam.id,
             name: exam.name,
@@ -357,10 +373,10 @@ export const ResultsApi = {
             openingDate: result.openingDate ?? null,
           } : null,
           tabia: tabiaRows[0] || null,
-          classTeacher: classTeacherRows[0] ? {
-            name: classTeacherRows[0].name,
-            shortName: classTeacherRows[0].shortName || null,
-            sign: classTeacherRows[0].sign || null,
+          classTeacher: assignmentAtExam || snapshot?.classTeacherName ? {
+            name: assignmentAtExam?.name || snapshot?.classTeacherName || null,
+            shortName: assignmentAtExam?.shortName || snapshot?.classTeacherShortName || null,
+            sign: assignmentAtExam?.sign || snapshot?.classTeacherSign || null,
           } : null,
         },
       })

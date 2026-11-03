@@ -104,6 +104,24 @@ export async function canAccessTeacherSubject(
   return Boolean(assignment)
 }
 
+/** Class Teachers may consolidate marks for any subject in their assigned class.
+ * Ordinary Teachers remain limited to their explicit class-subject assignments. */
+export async function canManageClassMarks(
+  actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
+  classId: string,
+  subjectId: string,
+) {
+  if (actor.role === 'SCHOOL_ADMIN') return canAccessClass(actor, classId)
+  if (actor.role !== 'TEACHER' || !actor.schoolId) return false
+  const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
+  if (!teacher) return false
+  const classTeacher = await db.classTeacherAssignment.findFirst({
+    where: { teacherId: teacher.id, schoolId: actor.schoolId, classId, status: 'ACTIVE' },
+    select: { id: true },
+  })
+  return Boolean(classTeacher) || canAccessTeacherSubject(actor, classId, subjectId)
+}
+
 export async function authorizeMarkMutation(
   actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>,
   input: { classId?: string | null; studentId: string; classSubjectId: string; examId: string },
@@ -116,14 +134,14 @@ export async function authorizeMarkMutation(
   if (!classSubject || !student || !exam || (input.classId && classSubject.classId !== input.classId) || student.classId !== classSubject.classId || exam.classId !== classSubject.classId || student.schoolId !== actor.schoolId || exam.schoolId !== actor.schoolId || classSubject.class.schoolId !== actor.schoolId || classSubject.subject.schoolId !== actor.schoolId) {
     return { ok: false as const, status: 400, error: 'Teacher, school, class, subject, student and exam must match' }
   }
-  if (actor.role === 'TEACHER' && !(await canAccessTeacherSubject(actor, classSubject.classId, classSubject.subjectId))) {
-    return { ok: false as const, status: 403, error: 'Teacher is not assigned to this subject in this class' }
+  if (actor.role === 'TEACHER' && !(await canManageClassMarks(actor, classSubject.classId, classSubject.subjectId))) {
+    return { ok: false as const, status: 403, error: 'Teacher is not assigned to this subject or as Class Teacher for this class' }
   }
   if (actor.role !== 'TEACHER' && actor.role !== 'SCHOOL_ADMIN') {
     return { ok: false as const, status: 403, error: 'This account cannot enter marks' }
   }
   const existing = await db.marksEntry.findUnique({ where: { studentId_classSubjectId_examId: { studentId: input.studentId, classSubjectId: input.classSubjectId, examId: input.examId } }, select: { id: true, recordedByUserId: true, marks: true, updatedAt: true } })
-  if (actor.role === 'TEACHER' && existing && existing.recordedByUserId !== actor.id) {
+  if (actor.role === 'TEACHER' && existing && existing.recordedByUserId !== actor.id && !(await canAccessClass(actor, classSubject.classId))) {
     return { ok: false as const, status: 403, error: 'Teachers can only edit marks they recorded. Ask a school administrator to change this mark.' }
   }
   return { ok: true as const, classSubject, existing }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useAppStore } from '@/lib/store'
 import type { SchoolType } from '@/types'
-import { apiCall, downloadExcel, getGrade, parseExcelMarks, matchExcelWithStudents } from '@/lib/utils'
+import { apiCall, downloadExcel, generateExcelMarks, getExcelMarkMetadata, getGrade, parseExcelMarks, matchExcelWithStudents } from '@/lib/utils'
 import { toast } from 'sonner'
 import {
   Save, Loader2, PenTool, Calculator, AlertTriangle, CheckCircle2,
@@ -27,6 +27,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from '@/components/ui/alert-dialog'
+import { deletePrivateTeacherMarkDrafts, getPrivateTeacherMarkDrafts, savePrivateTeacherMarkDrafts } from '@/services/database/OfflineSyncQueue'
 
 interface ClassItem {
   id: string
@@ -69,7 +70,7 @@ interface MarkRow {
 }
 
 export default function MarksEntry() {
-  const { currentSchool, schoolType } = useAppStore()
+  const { currentSchool, currentUser, schoolType } = useAppStore()
   const [classes, setClasses] = useState<ClassItem[]>([])
   const [exams, setExams] = useState<ExamItem[]>([])
   const [subjects, setSubjects] = useState<SubjectItem[]>([])
@@ -78,6 +79,8 @@ export default function MarksEntry() {
   const [selectedClass, setSelectedClass] = useState('')
   const [selectedExam, setSelectedExam] = useState('')
   const [selectedSubject, setSelectedSubject] = useState('')
+  const [classTeacherClassIds, setClassTeacherClassIds] = useState<string[]>([])
+  const [teacherAssignmentsLoaded, setTeacherAssignmentsLoaded] = useState(false)
 
   const [markRows, setMarkRows] = useState<MarkRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -123,6 +126,38 @@ export default function MarksEntry() {
   useEffect(() => {
     loadClasses()
   }, [currentSchool])
+
+  useEffect(() => {
+    let cancelled = false
+    if (currentUser?.role !== 'TEACHER' || !currentUser.schoolId) {
+      setClassTeacherClassIds([])
+      setTeacherAssignmentsLoaded(true)
+      return
+    }
+    setTeacherAssignmentsLoaded(false)
+    void (async () => {
+      try {
+        const teacherData = await apiCall(`/api/shulea/teachers?schoolId=${encodeURIComponent(currentUser.schoolId!)}`)
+        const teacherId = teacherData.teachers?.find((teacher: { userId?: string }) => teacher.userId === currentUser.id)?.id
+        if (!teacherId) {
+          if (!cancelled) setTeacherAssignmentsLoaded(true)
+          return
+        }
+        const assignmentData = await apiCall(`/api/shulea/teacher-classes?teacherId=${encodeURIComponent(teacherId)}&schoolId=${encodeURIComponent(currentUser.schoolId!)}&actorUserId=${encodeURIComponent(currentUser.id)}`)
+        if (!cancelled) {
+          setClassTeacherClassIds((assignmentData.classTeacherAssignments || []).map((item: { id: string }) => item.id))
+          setTeacherAssignmentsLoaded(true)
+        }
+      } catch (error) {
+        console.warn('[MarksEntry] Could not load class teacher assignments:', error)
+        if (!cancelled) {
+          setClassTeacherClassIds([])
+          setTeacherAssignmentsLoaded(true)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [currentUser?.id, currentUser?.schoolId, currentUser?.role])
 
   async function loadClasses() {
     try {
@@ -210,13 +245,14 @@ export default function MarksEntry() {
   }
 
   useEffect(() => {
+    if (currentUser?.role === 'TEACHER' && !teacherAssignmentsLoaded) return
     if (selectedClass && selectedExam && selectedSubject) {
       loadMarks()
     } else {
       setMarkRows([])
       setDataLoaded(false)
     }
-  }, [selectedClass, selectedExam, selectedSubject])
+  }, [selectedClass, selectedExam, selectedSubject, teacherAssignmentsLoaded, classTeacherClassIds, currentUser?.role])
 
   async function loadMarks() {
     setLoading(true)
@@ -239,11 +275,22 @@ export default function MarksEntry() {
       }> = data.marks || []
       const classSubjectId = selectedSubject
       const examId = selectedExam
+      const isClassTeacherForClass = currentUser?.role === 'TEACHER' && classTeacherClassIds.includes(selectedClass)
+      const selectedSubjectInfo = subjects.find(subject => subject.id === selectedSubject)
+      const visibleMarks = currentUser?.role === 'TEACHER' && !isClassTeacherForClass
+        ? await getPrivateTeacherMarkDrafts({
+            userId: currentUser.id,
+            schoolId: currentUser.schoolId || '',
+            classId: selectedClass,
+            examId: selectedExam,
+            subjectId: selectedSubjectInfo?.subjectId || '',
+          })
+        : fetchedMarks
 
       // Build a map of existing marks
       const marksMap = new Map<string, { marks: number | null; grade: string | null; remarks: string | null }>()
-      for (const m of fetchedMarks) {
-        marksMap.set(m.studentId, { marks: m.marks, grade: m.grade, remarks: m.remarks })
+      for (const m of visibleMarks) {
+        marksMap.set(m.studentId, { marks: m.marks, grade: m.grade, remarks: m.remarks || null })
       }
 
       const rows: MarkRow[] = fetchedStudents.map((s) => {
@@ -330,13 +377,36 @@ export default function MarksEntry() {
         marks: parseFloat(r.marks),
       }))
 
-    if (marksToSave.length === 0) {
+    const isPrivateTeacher = currentUser?.role === 'TEACHER' && !classTeacherClassIds.includes(selectedClass)
+    if (marksToSave.length === 0 && !isPrivateTeacher) {
       toast.error('No marks to save. Enter marks first.')
       return
     }
 
     setSaving(true)
     try {
+      const isClassTeacherForClass = currentUser?.role === 'TEACHER' && classTeacherClassIds.includes(selectedClass)
+      if (isPrivateTeacher && currentUser?.role === 'TEACHER') {
+        const subjectId = subjects.find(subject => subject.id === selectedSubject)?.subjectId
+        if (!currentUser.id || !currentUser.schoolId || !subjectId) throw new Error('Your teacher, school, or subject assignment is unavailable')
+        const scope = { userId: currentUser.id, schoolId: currentUser.schoolId, classId: selectedClass, examId: selectedExam, subjectId }
+        await savePrivateTeacherMarkDrafts(marksToSave.map(mark => ({
+          userId: currentUser.id!,
+          schoolId: currentUser.schoolId!,
+          classId: selectedClass,
+          examId: selectedExam,
+          subjectId,
+          studentId: mark.studentId,
+          marks: mark.marks!,
+          grade: getGrade(mark.marks!, schoolType as SchoolType).grade || '',
+          updatedAt: new Date().toISOString(),
+        })))
+        await deletePrivateTeacherMarkDrafts(scope, markRows.filter(row => row.marks === '').map(row => row.studentId))
+        toast.success(marksToSave.length
+          ? `Saved ${marksToSave.length} marks to your private device workspace. Export the Excel file and share it with the Class Teacher.`
+          : 'Cleared the saved marks in your private device workspace.')
+        return
+      }
       const result = await apiCall('/api/shulea/marks', {
         method: 'POST',
         body: JSON.stringify({
@@ -351,6 +421,32 @@ export default function MarksEntry() {
     } finally {
       setSaving(false)
     }
+  }
+
+  async function exportMarksForClassTeacher() {
+    const selectedClassInfo = modeClasses.find(item => item.id === selectedClass)
+    const selectedSubjectInfo = subjects.find(item => item.id === selectedSubject)
+    const selectedExamInfo = exams.find(item => item.id === selectedExam)
+    const transferRows = markRows.filter(row => row.marks !== '').map((row, index) => {
+      const student = students.find(item => item.id === row.studentId)
+      return {
+        sn: index + 1,
+        studentName: student?.admissionNo ? `${student.fullName} (${student.admissionNo})` : student?.fullName || '',
+        marks: Number(row.marks),
+        grade: row.grade,
+      }
+    }).filter(row => row.studentName && Number.isFinite(row.marks))
+    if (!transferRows.length) {
+      toast.error('Enter or import marks before exporting the class teacher Excel file')
+      return
+    }
+    const classLabel = selectedClassInfo?.fullName || selectedClassInfo?.name || 'Class'
+    const subjectLabel = selectedSubjectInfo?.shortName || selectedSubjectInfo?.subjectName || 'Subject'
+    const examLabel = selectedExamInfo?.name || 'Exam'
+    await downloadExcel(generateExcelMarks(transferRows, {
+      className: classLabel, subjectName: subjectLabel, examName: examLabel,
+      classId: selectedClass, examId: selectedExam, subjectId: selectedSubjectInfo?.subjectId,
+    }), `${classLabel}_${examLabel}_${subjectLabel}_for_Class_Teacher`)
   }
 
   async function handleComputeResults() {
@@ -393,6 +489,16 @@ export default function MarksEntry() {
 
     setParsingExcel(true)
     try {
+      const metadata = await getExcelMarkMetadata(file)
+      const selectedSubjectInfo = subjects.find(subject => subject.id === selectedSubject)
+      if (metadata && (
+        (metadata.classId && metadata.classId !== selectedClass) ||
+        (metadata.examId && metadata.examId !== selectedExam) ||
+        (metadata.subjectId && metadata.subjectId !== selectedSubjectInfo?.subjectId)
+      )) {
+        toast.error('This Excel file belongs to a different class, exam, or subject. Select the matching class, exam, and subject before uploading.')
+        return
+      }
       const rows = await parseExcelMarks(file)
       
       if (rows.length === 0) {
@@ -444,6 +550,7 @@ export default function MarksEntry() {
     const XLSX = await import('xlsx')
     const selectedClassInfo = modeClasses.find(c => c.id === selectedClass)
     const selectedSubjectInfo = subjects.find(s => s.id === selectedSubject)
+    const selectedExamInfo = exams.find(exam => exam.id === selectedExam)
     const sampleRows = students.length > 0
       ? students.map((student, index) => [index + 1, student.fullName, '', ''])
       : [
@@ -452,6 +559,10 @@ export default function MarksEntry() {
         ]
 
     const ws = XLSX.utils.aoa_to_sheet([
+      ['CLASS ID', selectedClass],
+      ['EXAM ID', selectedExam],
+      ['SUBJECT ID', selectedSubjectInfo?.subjectId || ''],
+      ['', '', '', ''],
       ['S/N', 'STUDENT NAME', 'MARKS', 'GRADE'],
       ...sampleRows,
     ])
@@ -464,7 +575,7 @@ export default function MarksEntry() {
     const subjectName = selectedSubjectInfo?.shortName || selectedSubjectInfo?.subjectName || 'Subject'
     downloadExcel(
       new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-      `${className}_${subjectName}_marks_template`
+      `${className}_${selectedExamInfo?.name || 'Exam'}_${subjectName}_marks_template`
     )
   }
 
@@ -502,6 +613,8 @@ export default function MarksEntry() {
   }
 
   const filledCount = markRows.filter(r => r.marks !== '').length
+  const isClassTeacherForCurrentClass = currentUser?.role === 'TEACHER' && classTeacherClassIds.includes(selectedClass)
+  const hasOfficialMarksAccess = currentUser?.role === 'SCHOOL_ADMIN' || isClassTeacherForCurrentClass
   const maxMarks = schoolType === 'PRIMARY' ? 50 : 100
 
   // Filter classes by current school type
@@ -536,7 +649,7 @@ export default function MarksEntry() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Marks Entry</h2>
-          <p className="text-sm text-muted-foreground">Enter and manage student exam marks</p>
+            <p className="text-sm text-muted-foreground">{currentUser?.role === 'TEACHER' && !isClassTeacherForCurrentClass ? 'Save your subject marks privately, then export an Excel file for the Class Teacher.' : 'Enter marks one subject at a time. The Class Teacher prepares the complete class results.'}</p>
         </div>
         {dataLoaded && (
           <div className="flex gap-2">
@@ -546,16 +659,19 @@ export default function MarksEntry() {
               className="bg-emerald-600 hover:bg-emerald-700 gap-2"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Save All ({filledCount})
+              {currentUser?.role === 'TEACHER' && !isClassTeacherForCurrentClass ? 'Save Private Marks' : `Save All (${filledCount})`}
             </Button>
-            <Button
+            {currentUser?.role === 'TEACHER' && !isClassTeacherForCurrentClass && <Button type="button" onClick={() => void exportMarksForClassTeacher()} variant="outline" className="gap-2">
+              <Download className="w-4 h-4" /> Export Excel for Class Teacher
+            </Button>}
+            {hasOfficialMarksAccess && <Button
               onClick={() => setComputeDialogOpen(true)}
               variant="outline"
               className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
             >
               <Calculator className="w-4 h-4" />
               Compute Results
-            </Button>
+            </Button>}
           </div>
         )}
       </div>

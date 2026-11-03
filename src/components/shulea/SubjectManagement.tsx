@@ -55,6 +55,7 @@ interface ClassSubject {
 
 export default function SubjectManagement() {
   const { currentSchool, schoolType, currentUser } = useAppStore()
+  const isSchoolAdmin = currentUser?.role === 'SCHOOL_ADMIN' || currentUser?.role === 'SUPER_ADMIN'
   const [subjects, setSubjects] = useState<Subject[]>([])
   const [classes, setClasses] = useState<ClassItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -268,7 +269,7 @@ export default function SubjectManagement() {
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        {isSchoolAdmin && <div className="flex gap-2">
           <Button variant="outline" onClick={openAssignDialog} className="gap-2">
             <BookOpenCheck className="w-4 h-4" />
             Assign to Class
@@ -277,7 +278,7 @@ export default function SubjectManagement() {
             <Plus className="w-4 h-4" />
             Add Subject
           </Button>
-        </div>
+        </div>}
       </div>
 
       {/* Filters */}
@@ -366,7 +367,7 @@ export default function SubjectManagement() {
                         <Badge variant="secondary" className="bg-orange-100 text-orange-700 border-orange-300 font-medium">{getTeacherSubjectCount(subject)}</Badge>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap" data-label="Actions">
-                        <div className="flex items-center justify-end gap-1">
+                        {isSchoolAdmin && <div className="flex items-center justify-end gap-1">
                           <Button 
                             variant="ghost" 
                             size="sm"
@@ -385,7 +386,7 @@ export default function SubjectManagement() {
                           >
                             <Trash2 className="w-4 h-4" />
                           </Button>
-                        </div>
+                        </div>}
                       </TableCell>
                     </TableRow>
                   ))

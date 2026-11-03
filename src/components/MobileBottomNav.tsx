@@ -15,18 +15,23 @@ const MOBILE_MENU_ITEMS: { view: AppView; label: string; icon: React.ElementType
   { view: 'reports', label: 'Reports', icon: FileText },
 ]
 
-export function MobileBottomNav() {
-  const { currentView, setView } = useAppStore()
+export function MobileBottomNav({ teacherIsClassTeacher }: { teacherIsClassTeacher: boolean | null }) {
+  const { currentView, setView, currentUser } = useAppStore()
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const menuItems = currentUser?.role === 'TEACHER'
+    ? teacherIsClassTeacher
+      ? MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'students', 'reports'].includes(item.view))
+      : MOBILE_MENU_ITEMS.filter(item => ['dashboard', 'reports'].includes(item.view))
+    : MOBILE_MENU_ITEMS
 
   // Check if current view is in "More" menu
-  const isMoreActive = !MOBILE_MENU_ITEMS.some(item => item.view === currentView)
+  const isMoreActive = !menuItems.some(item => item.view === currentView)
 
   return (
     <>
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 safe-area-bottom">
         <div className="flex items-center justify-around h-16 pb-safe">
-          {MOBILE_MENU_ITEMS.map((item) => {
+          {menuItems.map((item) => {
             const Icon = item.icon
             const isActive = currentView === item.view
             return (
@@ -64,7 +69,7 @@ export function MobileBottomNav() {
         </div>
       </nav>
 
-      <MobileMoreMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen} />
+      <MobileMoreMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen} teacherIsClassTeacher={teacherIsClassTeacher} />
     </>
   )
 }

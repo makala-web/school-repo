@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { canAccessClass, getAuthenticatedUser, rejectDemoMutation } from '@/lib/server-auth'
+import { recordSyncLedgerChanges } from '@/lib/sync-ledger'
 
 const VALID_STATUSES = new Set(['PRESENT', 'ABSENT', 'SICK', 'PERMISSION'])
 
@@ -24,8 +25,8 @@ export async function GET(request: NextRequest) {
 
     const actor = await getAuthenticatedUser(request)
     if (!actor || actor.role === 'SUPER_ADMIN') return NextResponse.json({ error: 'Academic account required' }, { status: 403 })
-    if (!(await canAccessClass(actor, classId, { allowSubjectAssignment: true }))) {
-      return NextResponse.json({ error: 'Teacher is not authorized for this class' }, { status: 403 })
+    if (!(await canAccessClass(actor, classId))) {
+      return NextResponse.json({ error: 'Only the assigned Class Teacher or School Admin can access class attendance' }, { status: 403 })
     }
 
     const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
     const date = body.date || ''
     const records = body.records || []
     if (!classId || !date || records.length === 0) return NextResponse.json({ error: 'Class, date and attendance records are required' }, { status: 400 })
-    if (!(await canAccessClass(actor, classId, { allowSubjectAssignment: true }))) return NextResponse.json({ error: 'Class access denied' }, { status: 403 })
+    if (!(await canAccessClass(actor, classId))) return NextResponse.json({ error: 'Only the assigned Class Teacher or School Admin can record class attendance' }, { status: 403 })
 
     const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
     if (!classRecord || classRecord.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Cross-school attendance denied' }, { status: 403 })
@@ -101,6 +102,8 @@ export async function POST(request: NextRequest) {
       create: { studentId: record.studentId!, classId, date, status: record.status! },
       update: { status: record.status! },
     })))
+    const saved = await db.attendance.findMany({ where: { classId, date, studentId: { in: studentIds }, class: { schoolId: actor.schoolId! } } })
+    await recordSyncLedgerChanges(actor.schoolId!, saved.map(record => ({ entityType: 'ATTENDANCE', entityId: record.id, payload: record })), request.headers.get('x-shulea-operation-id'))
     return NextResponse.json({ saved: records.length, message: 'Attendance saved successfully' })
   } catch (error) {
     console.error('Error saving attendance:', error)

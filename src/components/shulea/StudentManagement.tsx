@@ -453,7 +453,7 @@ export default function StudentManagement() {
                 <SelectItem value="GRADUATED">Graduated</SelectItem>
               </SelectContent>
             </Select>
-            <Button
+            {isSchoolAdmin && <Button
               variant="outline"
               size="sm"
               className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 gap-1 shrink-0"
@@ -467,7 +467,7 @@ export default function StudentManagement() {
             >
               <Trash2 className="w-3.5 h-3.5" />
               Delete Class
-            </Button>
+            </Button>}
           </div>
         </CardContent>
       </Card>

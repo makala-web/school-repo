@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
   })
   const visible = authorizedClasses ? (await Promise.all(changes.map(async change => {
     const payload = change.payload ? JSON.parse(change.payload) as Record<string, unknown> : null
+    if (change.entityType === 'SCHOOL') return change.entityId === actor.schoolId
     if (change.entityType === 'TEACHER_SUBJECT') {
       if (payload) return payload.teacherId === ownTeacher?.id
       const prior = await db.syncChange.findFirst({ where: { schoolId: actor.schoolId!, entityType: 'TEACHER_SUBJECT', entityId: change.entityId, sequence: { lt: change.sequence }, payload: { not: null } }, orderBy: { sequence: 'desc' }, select: { payload: true } })

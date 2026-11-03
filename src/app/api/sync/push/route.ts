@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic'
 const LEDGER_RETRY_ERROR = 'Cloud ledger transaction failed; upstream mutation already returned successfully'
 
 const SYNCABLE_ENDPOINTS = new Set([
+  '/api/shulea/school',
   '/api/shulea/students',
   '/api/shulea/teachers',
   '/api/shulea/class-teacher-assignments',
@@ -28,6 +29,7 @@ function getEntity(endpoint: string, method: string, body: Record<string, unknow
   const path = endpoint.split('?')[0]
   const query = new URL(endpoint, 'http://sync.local').searchParams
   const map: Record<string, string> = {
+    '/api/shulea/school': 'SCHOOL',
     '/api/shulea/students': 'STUDENT',
     '/api/shulea/teachers': 'TEACHER',
     '/api/shulea/classes': 'CLASS',
@@ -169,6 +171,25 @@ async function resolveTargets(
     ]
   }
 
+  if (path === '/api/shulea/school') {
+    const row = await db.school.findUnique({ where: { id: schoolId } })
+    return row ? [{ entityType: 'SCHOOL', entityId: row.id, payload: JSON.stringify({
+      id: row.id, name: row.name, schoolType: row.schoolType, logo: row.logo, logo2: row.logo2,
+      registrationNo: row.registrationNo, council: row.council, region: row.region, district: row.district,
+      ward: row.ward, phone: row.phone, email: row.email, headTeacherName: row.headTeacherName,
+      headTeacherSign: row.headTeacherSign, headTeacherComments: row.headTeacherComments,
+      classTeacherName: row.classTeacherName, classTeacherShortName: row.classTeacherShortName,
+      classTeacherComments: row.classTeacherComments, ctGradeA_en: row.ctGradeA_en, ctGradeB_en: row.ctGradeB_en,
+      ctGradeC_en: row.ctGradeC_en, ctGradeD_en: row.ctGradeD_en, ctGradeE_en: row.ctGradeE_en,
+      ctGradeA_sw: row.ctGradeA_sw, ctGradeB_sw: row.ctGradeB_sw, ctGradeC_sw: row.ctGradeC_sw,
+      ctGradeD_sw: row.ctGradeD_sw, ctGradeE_sw: row.ctGradeE_sw, htGradeA_en: row.htGradeA_en,
+      htGradeB_en: row.htGradeB_en, htGradeC_en: row.htGradeC_en, htGradeD_en: row.htGradeD_en,
+      htGradeE_en: row.htGradeE_en, htGradeA_sw: row.htGradeA_sw, htGradeB_sw: row.htGradeB_sw,
+      htGradeC_sw: row.htGradeC_sw, htGradeD_sw: row.htGradeD_sw, htGradeE_sw: row.htGradeE_sw,
+      academicYear: row.academicYear, term: row.term, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    }) }] : []
+  }
+
   if (path === '/api/shulea/grading' && method !== 'DELETE') {
     const rows = await db.gradingConfig.findMany({ where: { schoolId } })
     return rows.map(row => ({ entityType: 'GRADING_CONFIG', entityId: row.id, payload: JSON.stringify(row) }))
@@ -211,6 +232,9 @@ export async function POST(request: NextRequest) {
   }
   if (typeof body.schoolId === 'string' && body.schoolId !== actor.schoolId) {
     return NextResponse.json({ error: 'Cross-school synchronization denied' }, { status: 403 })
+  }
+  if (endpoint.split('?')[0] === '/api/shulea/school' && (actor.role !== 'SCHOOL_ADMIN' || body.id !== actor.schoolId)) {
+    return NextResponse.json({ error: 'Only the School Admin can synchronize school settings' }, { status: 403 })
   }
 
   const entity = getEntity(endpoint, method, body)
@@ -311,6 +335,8 @@ export async function POST(request: NextRequest) {
     await db.$transaction(async (tx) => {
     await tx.syncOperation.update({ where: { id: operation.id }, data: { status: 'PROCESSED', response: responseText.slice(0, 20000), processedAt: new Date(), error: null, entityId } })
     for (const target of targets) {
+      const alreadyRecorded = await tx.syncChange.findFirst({ where: { schoolId, operationId, entityType: target.entityType, entityId: target.entityId }, select: { id: true } })
+      if (alreadyRecorded) continue
       // The marks API writes each mark and its version to the ledger together.
       // Re-logging here would create a false extra version for queued bulk writes.
       if (endpoint.split('?')[0] === '/api/shulea/marks' && target.entityType === 'MARK') continue

@@ -7,12 +7,13 @@ import { fillDefaultReportComments } from '@/modules/settings/default-comments';
 async function authorizeResultsRequest(request: NextRequest) {
   const actor = await getAuthenticatedUser(request)
   if (!actor) return { actor: null, response: NextResponse.json({ error: 'Authentication required' }, { status: 401 }) }
-  if (actor.role === 'SUPER_ADMIN') return { actor, response: null }
+  if (actor.role === 'SUPER_ADMIN') return { actor: null, response: NextResponse.json({ error: 'Platform administrators cannot access school academic reports' }, { status: 403 }) }
 
   const params = request.nextUrl.searchParams
   const examId = params.get('examId')
   const classId = params.get('classId')
   const studentId = params.get('studentId')
+  const action = params.get('action')
 
   let targetSchoolId: string | null = null
   let targetClassId: string | null = classId
@@ -20,8 +21,15 @@ async function authorizeResultsRequest(request: NextRequest) {
   if (examId) {
     const exam = await db.exam.findUnique({ where: { id: examId }, select: { schoolId: true, classId: true } })
     if (!exam) return { actor: null, response: NextResponse.json({ error: 'Exam not found' }, { status: 404 }) }
+    if (classId && classId !== exam.classId) return { actor: null, response: NextResponse.json({ error: 'Exam does not belong to the requested class' }, { status: 400 }) }
     targetSchoolId = exam.schoolId
     targetClassId = targetClassId || exam.classId
+    if (studentId) {
+      const student = await db.student.findUnique({ where: { id: studentId }, select: { schoolId: true, classId: true } })
+      if (!student || student.schoolId !== exam.schoolId || student.classId !== exam.classId) {
+        return { actor: null, response: NextResponse.json({ error: 'Student and exam must belong to the same school class' }, { status: 403 }) }
+      }
+    }
   } else if (classId) {
     const classRecord = await db.class.findUnique({ where: { id: classId }, select: { schoolId: true } })
     if (!classRecord) return { actor: null, response: NextResponse.json({ error: 'Class not found' }, { status: 404 }) }
@@ -44,7 +52,10 @@ async function authorizeResultsRequest(request: NextRequest) {
     if (!teacher) return { actor: null, response: NextResponse.json({ error: 'Teacher profile not found' }, { status: 403 }) }
     const classAssignment = await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE', schoolId: actor.schoolId || '' }, select: { id: true } })
     if (!classAssignment) {
-      return { actor: null, response: NextResponse.json({ error: 'Only the assigned class teacher can access whole-class results' }, { status: 403 }) }
+      const subjectAssignments = action === 'subject-analysis'
+        ? await db.teacherSubject.count({ where: { teacherId: teacher.id, classId: targetClassId, class: { schoolId: actor.schoolId || '' }, subject: { schoolId: actor.schoolId || '' } } })
+        : 0
+      if (!subjectAssignments) return { actor: null, response: NextResponse.json({ error: 'Class-wide reports require a Class Teacher assignment; subject reports require a subject assignment' }, { status: 403 }) }
     }
   }
 
@@ -69,7 +80,7 @@ export async function GET(request: NextRequest) {
       case 'bottom-students':
         return await handleBottomStudents(searchParams);
       case 'subject-analysis':
-        return await handleSubjectAnalysis(searchParams);
+        return await handleSubjectAnalysis(searchParams, authorization.actor!);
       case 'report-card':
         return await handleReportCard(searchParams);
       case 'overall-results':
@@ -92,9 +103,7 @@ export async function POST(request: NextRequest) {
 
     const actor = await getAuthenticatedUser(request)
     if (!actor) return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
-    if (actor.role !== 'SUPER_ADMIN' && actor.role !== 'SCHOOL_ADMIN' && actor.role !== 'TEACHER') {
-      return NextResponse.json({ error: 'Results access denied' }, { status: 403 })
-    }
+    if (actor.role !== 'SCHOOL_ADMIN') return NextResponse.json({ error: 'Only the School Admin can modify report records' }, { status: 403 })
 
     const exam = body.examId
       ? await db.exam.findUnique({ where: { id: body.examId }, select: { schoolId: true, classId: true } })
@@ -102,14 +111,18 @@ export async function POST(request: NextRequest) {
     if (body.examId && !exam) return NextResponse.json({ error: 'Exam not found' }, { status: 404 })
     const targetSchoolId = exam?.schoolId || (body.schoolId as string | undefined)
     const targetClassId = exam?.classId || (body.classId as string | undefined)
-    if (actor.role !== 'SUPER_ADMIN' && (!targetSchoolId || actor.schoolId !== targetSchoolId)) {
+    if (!targetSchoolId || actor.schoolId !== targetSchoolId) {
       return NextResponse.json({ error: 'Cross-school results access denied' }, { status: 403 })
     }
-    if (actor.role === 'TEACHER' && targetClassId) {
-      const teacher = await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
-      const classAssignment = teacher ? await db.classTeacherAssignment.findFirst({ where: { teacherId: teacher.id, classId: targetClassId, status: 'ACTIVE', schoolId: actor.schoolId || '' }, select: { id: true } }) : null
-      if (!classAssignment) {
-        return NextResponse.json({ error: 'Only the assigned class teacher can update whole-class results' }, { status: 403 })
+    if (exam && body.classId && body.classId !== exam.classId) return NextResponse.json({ error: 'Exam does not belong to the requested class' }, { status: 400 })
+    if (targetClassId) {
+      const targetClass = await db.class.findUnique({ where: { id: targetClassId }, select: { schoolId: true } })
+      if (!targetClass || targetClass.schoolId !== actor.schoolId) return NextResponse.json({ error: 'Cross-school results access denied' }, { status: 403 })
+    }
+    if (action === 'update-dates' && body.studentId) {
+      const student = await db.student.findUnique({ where: { id: body.studentId }, select: { schoolId: true, classId: true } })
+      if (!student || student.schoolId !== actor.schoolId || !exam || student.classId !== exam.classId) {
+        return NextResponse.json({ error: 'Report dates can only be changed for a student in the authorized exam class' }, { status: 403 })
       }
     }
 
@@ -120,6 +133,14 @@ export async function POST(request: NextRequest) {
     // Support creating a result via POST with create payload
     if (!action || action === 'create') {
       try {
+        if (!body.studentId || !body.examId) return NextResponse.json({ error: 'Student ID and Exam ID are required' }, { status: 400 })
+        const [student, scopedExam] = await Promise.all([
+          db.student.findUnique({ where: { id: body.studentId }, select: { schoolId: true, classId: true } }),
+          db.exam.findUnique({ where: { id: body.examId }, select: { schoolId: true, classId: true } }),
+        ])
+        if (!student || !scopedExam || student.schoolId !== actor.schoolId || scopedExam.schoolId !== actor.schoolId || student.classId !== scopedExam.classId || (body.classId && body.classId !== scopedExam.classId)) {
+          return NextResponse.json({ error: 'Result student and exam must belong to the same authorized school class' }, { status: 403 })
+        }
         const created = await ResultsRepository.create(body)
         return NextResponse.json({ message: 'Result created', result: created })
       } catch (err) {
@@ -364,7 +385,7 @@ async function handleBottomStudents(searchParams: URLSearchParams) {
 }
 
 // Get subject performance analysis
-async function handleSubjectAnalysis(searchParams: URLSearchParams) {
+async function handleSubjectAnalysis(searchParams: URLSearchParams, actor: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
   const examId = searchParams.get('examId');
   const classId = searchParams.get('classId');
 
@@ -376,8 +397,15 @@ async function handleSubjectAnalysis(searchParams: URLSearchParams) {
   }
 
   // Get all class subjects
+  const teacher = actor.role === 'TEACHER'
+    ? await db.teacher.findUnique({ where: { userId: actor.id }, select: { id: true } })
+    : null
+  const assignedSubjectIds = teacher
+    ? (await db.teacherSubject.findMany({ where: { teacherId: teacher.id, classId, class: { schoolId: actor.schoolId || '' }, subject: { schoolId: actor.schoolId || '' } }, select: { subjectId: true } })).map(item => item.subjectId)
+    : undefined
+  if (teacher && !assignedSubjectIds?.length) return NextResponse.json({ analysis: [] })
   const classSubjects = await db.classSubject.findMany({
-    where: { classId },
+    where: { classId, ...(assignedSubjectIds ? { subjectId: { in: assignedSubjectIds } } : {}) },
     include: { subject: true },
   });
 
@@ -645,17 +673,26 @@ async function handleReportCard(searchParams: URLSearchParams) {
   // cannot safely identify an assignment for a historical report year.
   const school = student.class.school;
   const reportSchool = fillDefaultReportComments(school);
-  const classTeacherAssignment = await db.classTeacherAssignment.findFirst({
+  const classTeacherAssignments = await db.classTeacherAssignment.findMany({
     where: {
       schoolId: school.id,
       classId: student.classId,
       academicYear: exam.academicYear,
-      status: 'ACTIVE',
     },
     orderBy: { startDate: 'desc' },
     include: { teacher: { select: { name: true, shortName: true, sign: true } } },
   });
-  const assignedClassTeacher = classTeacherAssignment?.teacher || null;
+  const dateAssignment = exam.examDate
+    ? classTeacherAssignments.find(assignment => assignment.startDate <= exam.examDate! && (!assignment.endDate || assignment.endDate >= exam.examDate!))
+    : null
+  const selectedAssignment = dateAssignment || classTeacherAssignments.find(assignment => assignment.status === 'ACTIVE') || classTeacherAssignments[0]
+  const assignedClassTeacher = selectedAssignment?.teacher || (result && (result.classTeacherName || result.classTeacherShortName || result.classTeacherSign)
+    ? {
+        name: result.classTeacherName || '',
+        shortName: result.classTeacherShortName || null,
+        sign: result.classTeacherSign || null,
+      }
+    : null)
 
   // Build subject marks with positions
   const subjectMarks = marks.map(m => ({
@@ -724,8 +761,8 @@ async function handleReportCard(searchParams: URLSearchParams) {
         email: school.email,
         logo: school.logo,
         logo2: school.logo2,
-        headTeacherName: school.headTeacherName,
-        headTeacherSign: school.headTeacherSign,
+        headTeacherName: result?.headTeacherName || school.headTeacherName,
+        headTeacherSign: result?.headTeacherSign || school.headTeacherSign,
         headTeacherComments: reportSchool.headTeacherComments,
         classTeacherName: reportSchool.classTeacherName,
         classTeacherShortName: reportSchool.classTeacherShortName,
